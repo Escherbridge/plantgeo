@@ -22,7 +22,8 @@ export function CatalogPicker({
   if (catalog.status === "empty") {
     return (
       <p role="status" className="font-editorial-text text-body text-ink">
-        The Aevani catalog is not available right now. The map still shows live PlantGeo data.
+        Aevani preview tools are not loaded in this view yet. Live PlantGeo terrain, drainage,
+        wetland, soil, and flood layers remain interactive on the map.
       </p>
     );
   }

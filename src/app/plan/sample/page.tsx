@@ -7,9 +7,9 @@ import { normalizeRefCode } from "@/lib/plans/ref-code";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Sample plan — not a real customer - PlantGeo",
+  title: "Ada County Sample Plan — PlantGeo",
   description:
-    "A demonstration site plan on real Ada County, Idaho data. Not a real customer.",
+    "Explore elevation, drainage paths, wetlands, soils, and flood boundaries on a real Ada County, Idaho demonstration parcel, then start your own site plan.",
   alternates: { canonical: "/plan/sample" },
 };
 

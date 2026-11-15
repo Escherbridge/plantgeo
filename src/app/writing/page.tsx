@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { MapLegalNote, PlanFunnelGate } from "@/components/content/PlanFunnelGate";
 import {
   EditorialContainer,
   EditorialDisplay,
@@ -10,21 +11,31 @@ import {
 import { blogPath, ESSAYS, essayDisplayDate } from "@/lib/writing/essays";
 
 export const metadata: Metadata = {
-  title: "Notes — PlantGeo",
-  description: "Not forecast beyond today. Plan the land, then pick the tools.",
+  title: "Field Blog & Notes — PlantGeo",
+  description:
+    "Field walks and planning notes on reading sun, slope, drainage, wet spots, soils, and microclimates before staking beds or buying equipment.",
   alternates: { canonical: "/writing" },
 };
 
 export default function WritingIndexPage() {
+  const posts = [...ESSAYS].sort(
+    (a, b) => b.date.localeCompare(a.date) || a.slug.localeCompare(b.slug),
+  );
+
   return (
     <EditorialPage>
       <EditorialContainer>
         <header className="pt-section pb-roomy">
-          <EditorialEyebrow>Writing</EditorialEyebrow>
-          <EditorialDisplay className="mt-comfortable">Notes</EditorialDisplay>
+          <EditorialEyebrow>Writing &amp; Field Stories</EditorialEyebrow>
+          <EditorialDisplay className="mt-comfortable">Notes from the ground</EditorialDisplay>
+          <PlanFunnelGate
+            eyebrow="Try the live map"
+            heading="Open the Ada County sample plan"
+            body="Toggle terrain contours, drainage threads, wetlands, and soil map units side by side before walking your own yard or acreage."
+          />
         </header>
         <ul className="rule-top-heavy border-t-rule">
-          {ESSAYS.map((essay) => (
+          {posts.map((essay) => (
             <li key={essay.slug} className="rule-bottom-hairline border-b-rule-faint py-comfortable">
               <p className="font-editorial-label text-label text-ink-muted uppercase">
                 {essayDisplayDate(essay.date)}
@@ -43,6 +54,9 @@ export default function WritingIndexPage() {
             </li>
           ))}
         </ul>
+        <div className="pb-chapter">
+          <MapLegalNote />
+        </div>
       </EditorialContainer>
     </EditorialPage>
   );

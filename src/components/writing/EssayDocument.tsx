@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { JsonLd } from "@/components/content/JsonLd";
+import { MapLegalNote, PlanFunnelGate } from "@/components/content/PlanFunnelGate";
 import {
   EditorialContainer,
+  EditorialHeading,
   EditorialHeadline,
   EditorialLead,
   EditorialLink,
@@ -19,8 +21,34 @@ import {
   type Essay,
 } from "@/lib/writing/essays";
 
+type EssayBlock =
+  | { type: "heading"; text: string }
+  | { type: "list"; items: string[] }
+  | { type: "paragraph"; text: string };
+
+function groupParagraphs(paragraphs: readonly string[]): EssayBlock[] {
+  const blocks: EssayBlock[] = [];
+  for (const entry of paragraphs) {
+    if (entry.startsWith("## ")) {
+      blocks.push({ type: "heading", text: entry.slice(3).trim() });
+    } else if (entry.startsWith("- ")) {
+      const item = entry.slice(2).trim();
+      const prev = blocks.at(-1);
+      if (prev?.type === "list") {
+        prev.items.push(item);
+      } else {
+        blocks.push({ type: "list", items: [item] });
+      }
+    } else {
+      blocks.push({ type: "paragraph", text: entry });
+    }
+  }
+  return blocks;
+}
+
 export function EssayDocument({ essay }: { essay: Essay }) {
   const related = ESSAYS.filter((other) => other.slug !== essay.slug);
+  const blocks = groupParagraphs(essay.paragraphs);
 
   return (
     <EditorialPage>
@@ -36,12 +64,33 @@ export function EssayDocument({ essay }: { essay: Essay }) {
           <EditorialLead className="mt-roomy">{essay.summary}</EditorialLead>
         </header>
         <EditorialProse>
-          {essay.paragraphs.map((paragraph) => (
-            <p key={paragraph.slice(0, 48)}>
-              <EssayInline text={paragraph} />
-            </p>
-          ))}
+          {blocks.map((block, index) => {
+            if (block.type === "heading") {
+              return (
+                <EditorialHeading as="h2" key={`h-${index}`}>
+                  {block.text}
+                </EditorialHeading>
+              );
+            }
+            if (block.type === "list") {
+              return (
+                <ul key={`l-${index}`} className="list-disc pl-comfortable">
+                  {block.items.map((item) => (
+                    <li key={item.slice(0, 48)} className="mt-tight">
+                      <EssayInline text={item} />
+                    </li>
+                  ))}
+                </ul>
+              );
+            }
+            return (
+              <p key={`p-${index}`}>
+                <EssayInline text={block.text} />
+              </p>
+            );
+          })}
         </EditorialProse>
+        <PlanFunnelGate />
         <section className="pt-section">
           <EditorialSubheading as="h2">Sources</EditorialSubheading>
           <ul className="mt-comfortable max-w-measure font-editorial-text text-body text-ink">
@@ -59,7 +108,7 @@ export function EssayDocument({ essay }: { essay: Essay }) {
         </section>
         {related.length > 0 ? (
           <section className="pt-section">
-            <EditorialSubheading as="h2">Related</EditorialSubheading>
+            <EditorialSubheading as="h2">More field stories</EditorialSubheading>
             <ul className="mt-comfortable max-w-measure font-editorial-text text-body text-ink">
               {related.map((other) => (
                 <li key={other.slug} className="mt-tight">
@@ -74,14 +123,15 @@ export function EssayDocument({ essay }: { essay: Essay }) {
             </ul>
           </section>
         ) : null}
-        <p className="max-w-measure pt-section pb-chapter font-editorial-text text-body text-ink">
+        <MapLegalNote author={ESSAY_AUTHOR} lastReviewed={essay.date} />
+        <p className="max-w-measure pt-comfortable pb-chapter font-editorial-text text-body text-ink">
           <EditorialLink href="/blog">Blog</EditorialLink>
           {" · "}
-          <EditorialLink href="/news">News</EditorialLink>
+          <EditorialLink href="/guides">Field guides</EditorialLink>
           {" · "}
           <EditorialLink href="/site-types">Site types</EditorialLink>
           {" · "}
-          <EditorialLink href="/guides">Guides</EditorialLink>
+          <EditorialLink href="/plan/sample-ada-county">Sample plan</EditorialLink>
           {" · "}
           <EditorialLink href="/contact">Contact</EditorialLink>
           {" · "}

@@ -163,12 +163,13 @@ export function PlanWorkspace({
           ) : null}
           {plan.missing ? (
             <p className="mt-snug font-editorial-text text-body text-ink" role="status">
-              The sample plan is not available yet, so the map is on its usual opening view.
+              Showing the Ada County, Idaho map view while the saved sample record loads.
             </p>
           ) : null}
           {plan.isSample ? (
             <p className="mt-snug font-editorial-text text-body text-ink">
-              This demonstration uses live map data for Ada County, Idaho. It is not a real customer.
+              Walk elevation contours, drainage lines, wetlands, soils, and flood boundaries on live
+              Ada County, Idaho map data. Name a plan below to save your own private site workspace.
             </p>
           ) : plan.savedToAccount ? (
             <p className="mt-snug font-editorial-text text-body text-ink">This plan is saved to your account.</p>
@@ -264,9 +265,12 @@ export function PlanWorkspace({
             </p>
           ) : null}
 
-          <h2 className="mt-section font-editorial-display text-subheading text-ink">Aevani catalog</h2>
+          <h2 className="mt-section font-editorial-display text-subheading text-ink">
+            Planned tools &amp; systems
+          </h2>
           <p className="mt-tight font-editorial-text text-caption text-ink">
-            These are planning references. Coming soon means the product is not for sale here.
+            Optional Aevani catalogue picks for your site layout. Preview items are planning
+            references only and are not for sale yet.
           </p>
           <div className="mt-comfortable">
             <CatalogPicker

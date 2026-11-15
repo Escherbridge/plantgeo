@@ -23,16 +23,44 @@ import { SITE_TYPES } from "@/lib/content/site-types";
 import { readFileSync } from "node:fs";
 
 describe("blog", () => {
-  it("lists the two essays and no other posts", () => {
-    render(<BlogIndexPage />);
-    expect(screen.getByRole("heading", { level: 1, name: "Notes" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Not forecast beyond today" }).getAttribute("href")).toBe(
+  it("lists all five field-blog essays and exposes the top-of-funnel sample plan gate", () => {
+    const { container } = render(<BlogIndexPage />);
+    const view = within(container);
+    expect(view.getByRole("heading", { level: 1, name: "Notes from the ground" })).toBeTruthy();
+    expect(
+      view.getByRole("link", { name: "Open the Ada County Sample Plan" }).getAttribute("href"),
+    ).toBe("/plan/sample-ada-county");
+    expect(view.getByRole("link", { name: "Start your own site plan" }).getAttribute("href")).toBe(
+      "/plan/new",
+    );
+    expect(
+      view
+        .getByRole("link", {
+          name: "What a muddy walk after autumn rain tells you about a five-acre parcel",
+        })
+        .getAttribute("href"),
+    ).toBe("/blog/walking-a-five-acre-parcel-after-rain");
+    expect(
+      view
+        .getByRole("link", {
+          name: "Reading winter sun, south slopes, and windbreaks before planting trees",
+        })
+        .getAttribute("href"),
+    ).toBe("/blog/sun-arc-aspect-and-windbreaks-for-orchards-and-beds");
+    expect(
+      view
+        .getByRole("link", {
+          name: "Pairing soil maps and wetland layers with a shovel before digging",
+        })
+        .getAttribute("href"),
+    ).toBe("/blog/pairing-wetland-and-soil-maps-with-a-shovel-test");
+    expect(view.getByRole("link", { name: "Not forecast beyond today" }).getAttribute("href")).toBe(
       "/blog/not-forecast-beyond-today",
     );
     expect(
-      screen.getByRole("link", { name: "Plan the land, then pick the tools" }).getAttribute("href"),
+      view.getByRole("link", { name: "Plan the land, then pick the tools" }).getAttribute("href"),
     ).toBe("/blog/plan-the-land-then-pick-the-tools");
-    expect(screen.getAllByRole("heading", { level: 2 })).toHaveLength(2);
+    expect(view.getAllByRole("heading", { level: 2 })).toHaveLength(6);
   });
 
   it("renders an essay at the blog url with article schema and a follow link", async () => {
@@ -40,6 +68,7 @@ describe("blog", () => {
       params: Promise.resolve({ slug: "plan-the-land-then-pick-the-tools" }),
     });
     const { container } = render(page);
+    const view = within(container);
     const script = container.querySelector('script[type="application/ld+json"]');
     const data = JSON.parse(script?.textContent ?? "{}") as {
       "@graph"?: { "@type"?: string; mainEntityOfPage?: string; datePublished?: string }[];
@@ -49,10 +78,11 @@ describe("blog", () => {
     expect(article?.mainEntityOfPage).toBe(
       "https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools",
     );
-    const catalogue = screen.getByRole("link", { name: "Aevani's catalogue" });
+    const catalogue = view.getByRole("link", { name: "Aevani's catalogue" });
     expect(catalogue.getAttribute("href")).toBe("https://aevani.com");
     expect(catalogue.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
-    expect(screen.getByText(/Escherbridge/)).toBeTruthy();
+    expect(container.textContent ?? "").toMatch(/Escherbridge/);
+    expect(container.textContent ?? "").toMatch(/Map & legal note:/);
   });
 
   it("404s an unknown blog slug", async () => {
@@ -264,39 +294,36 @@ describe("news and site types", () => {
 
 const GUIDE_FIGURES: Record<string, readonly string[]> = {
   "fema-flood-maps": [
-    "FEMA's Flood Map Service Center is the official online place",
-    "not insurance advice",
+    "The FEMA Flood Map Service Center (MSC) is the official online location",
     "8 July 2020",
     "7 July 2020",
     "Zone A, AO, A1-A30",
-    "A FIRMette",
-    "not a survey of the lot",
+    "a FIRMette",
+    "not a property survey",
     "https://www.fema.gov/flood-maps",
     "https://www.fema.gov/glossary/flood-insurance-rate-map-firm",
     "https://www.fema.gov/glossary/special-flood-hazard-area-sfha",
     "https://msc.fema.gov/portal/howto",
   ],
   "ready-floods": [
-    "not a flood-insurance ad",
-    "A following item on the same list is",
     "Where it rains it can flood.",
     "Floods are the most common disaster in the United States.",
     "up to 30 days",
-    "does not recommend a policy",
+    "Homeowner's insurance policies do not cover flooding.",
     "https://www.ready.gov/floods",
   ],
   "nwi-wetlands": [
     "principal federal agency",
-    "does not invent an accuracy radius, a national acreage, or a disclaimer attributed to FWS",
-    "not a sentence quoted from FWS",
+    "wetland and deepwater habitats",
+    "never settles a permit",
     "https://www.fws.gov/program/national-wetlands-inventory",
   ],
   "usgs-3dep": [
     "as of September 30, 2026",
     "$13.5 billion",
     "1,352 mission critical requirements",
-    "not a benefit that accrues to a single parcel",
-    "does not invent a nationwide accuracy in feet",
+    "not to a single backyard parcel",
+    "bare earth and 3D point clouds",
     "https://www.usgs.gov/3d-elevation-program",
   ],
   "national-map": [
@@ -308,14 +335,14 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
   "base-flood-elevation": [
     "1% chance of equaling or exceeding that level in any given year",
     "5 March 2020",
-    "does not invent a BFE for Zone A",
-    "not insurance or building-code advice",
+    "does not list a published BFE line",
+    "not a finished-floor code requirement",
     "https://www.fema.gov/glossary/base-flood-elevation-bfe",
   ],
   firmette: [
     "approximately two feet by three feet",
     "a FIRMette cannot be created for preliminary maps",
-    "Purposing",
+    "not final regulatory products",
     "https://msc.fema.gov/portal/howto",
     "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
   ],
@@ -323,9 +350,7 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
     "over 90% of the U.S. population",
     'not "90% of land area."',
     "not final regulatory products",
-    "Pending is named only as a heading",
-    "returned HTTP 404",
-    "not insurance advice",
+    "Pending Flood Hazard Data",
     "https://www.fema.gov/flood-maps/national-flood-hazard-layer",
     "https://msc.fema.gov/portal/howto",
   ],
@@ -333,7 +358,7 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
     "for at least 30 feet from your home",
     "for up to five locations nationwide",
     "which requires no-sign up",
-    "are not merged here",
+    "distinctly on our",
     "https://www.ready.gov/wildfires",
   ],
   "us-topo": [
@@ -342,48 +367,56 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
     "1:24,000-scale",
     "7.5-minute",
     "1884 to 2006",
-    "returned HTTP 404",
-    "not a property survey",
     "https://www.usgs.gov/programs/national-geospatial-program/topographic-maps",
   ],
 };
 
 describe("field guides", () => {
-  it("publishes the guides index with ten children, sources, and an illustrative label", () => {
+  it("publishes the guides index with field-walk voice, ten children, funnel gates, and bottom legal notes", () => {
     const { container } = render(<GuidesPage />);
     const view = within(container);
     expect(
-      view.getByRole("heading", { level: 1, name: "Write down the layer, and the date you read it." }),
+      view.getByRole("heading", {
+        level: 1,
+        name: "Field guides for reading water, terrain, and risk before you dig",
+      }),
     ).toBeTruthy();
     const text = container.textContent ?? "";
-    expect(text).toMatch(/These pages are how-tos for official layers/);
-    expect(text).toMatch(/not insurance advice/);
+    expect(text).toMatch(/Walk the terrain|muddy-boots parcel walk/i);
+    expect(text).toMatch(/Map & legal note:/);
+    expect(text).toMatch(/insurance advice/);
     expect(text).toMatch(/PlantGeo publishes no forecasts and claims no agency deployments/);
     expect(text).toMatch(/not for sale yet/);
-    expect(text).toMatch(/No referral share is quoted/);
+    expect(text).toMatch(/No affiliate referral share is quoted/);
     expect(text).toMatch(/as of September 30, 2026/);
     expect(text).toMatch(/The National Geospatial Program and its partners/);
-    expect(text).toMatch(/Floods are the most common disaster in the United States/);
+    expect(text).toMatch(/Floods are the most common disaster in the United States/i);
     expect(text).toMatch(/Flood Map Service Center/);
-    expect(text).toMatch(/no accuracy or acreage is stated here/);
     expect(text).toMatch(/5 March 2020/);
-    expect(text).toMatch(/cannot be created for a preliminary map/);
+    expect(text).toMatch(/cannot generate a FIRMette/);
     expect(text).toMatch(/over 90% of the U\.S\. population/);
     expect(text).toMatch(/at least 30 feet/);
     expect(text).toMatch(/1884 to 2006/);
-    expect(text).toMatch(/not a Firewise or IBHS width/);
+    expect(text).toMatch(/Firewise and IBHS zone widths distinct/);
     expect(text).not.toMatch(/\$13\.5/);
     expect(text).not.toMatch(/\d[\d,]* acres/i);
     expect(text).not.toMatch(/90% of land area/);
     expect(text).not.toMatch(/0 to 5 feet|5 to 30 feet|30 to 100 feet/);
     expect(text).not.toMatch(/PlantGeo forecasts/i);
-    expect(text).not.toMatch(/referral share is \d/i);
+    expect(text).not.toMatch(/referral share is \d|referral[^\n]{0,40}\d+%/i);
+    expect(text).not.toMatch(/PrimusNeo/i);
     expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
     expect(view.getByRole("heading", { level: 2, name: "A situation like this" })).toBeTruthy();
-    expect(text).toMatch(/a worked example, not a customer/);
-    expect(text).not.toMatch(/Hero figures/);
-    expect(text).not.toMatch(/Every stat on this page is cited/);
-    expect(text).not.toMatch(/An illustrative scenario/);
+    expect(text).toMatch(/worked example rather than a client record/);
+    expect(
+      view.getByRole("link", { name: "Open the Ada County Sample Plan" }).getAttribute("href"),
+    ).toBe("/plan/sample-ada-county");
+    expect(view.getByRole("link", { name: "Start your own site plan" }).getAttribute("href")).toBe(
+      "/plan/new",
+    );
+    expect(
+      view.getByRole("link", { name: "Become a site-planning affiliate" }).getAttribute("href"),
+    ).toBe("/affiliate");
     for (const page of GUIDES) {
       expect(view.getByRole("link", { name: page.crumb }).getAttribute("href")).toBe(`/guides/${page.slug}`);
     }
@@ -392,10 +425,13 @@ describe("field guides", () => {
       "/blog/not-forecast-beyond-today",
     );
     expect(view.getByRole("link", { name: "News" }).getAttribute("href")).toBe("/news");
-    const catalogue = view.getByRole("link", { name: "Aevani’s catalogue" });
-    expect(catalogue.getAttribute("href")).toBe("https://aevani.com");
-    expect(catalogue.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
-    expect(catalogue.parentElement?.textContent ?? "").toMatch(/not for sale yet/);
+    const catalogueLinks = view.getAllByRole("link", { name: /Aevani[’']s catalogue/ });
+    expect(catalogueLinks.length).toBeGreaterThan(0);
+    for (const catalogue of catalogueLinks) {
+      expect(catalogue.getAttribute("href")).toBe("https://aevani.com");
+      expect(catalogue.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
+      expect(catalogue.parentElement?.textContent ?? "").toMatch(/not for sale yet/);
+    }
     for (const source of [
       "https://www.fema.gov/flood-maps",
       "https://www.ready.gov/floods",
@@ -429,7 +465,7 @@ describe("field guides", () => {
     expect(container.querySelectorAll('script[type="application/ld+json"]')).toHaveLength(1);
   });
 
-  it("publishes each guide with the draft figures, sources, and article schema", async () => {
+  it("publishes each guide with accurate sources, funnel gates, bottom legal notes, and article schema", async () => {
     expect(guideStaticParams().map((entry) => entry.slug)).toEqual(GUIDES.map((page) => page.slug));
     for (const page of GUIDES) {
       const rendered = await GuidePage({ params: Promise.resolve({ slug: page.slug }) });
@@ -438,14 +474,21 @@ describe("field guides", () => {
       expect(view.getByRole("heading", { level: 1, name: page.h1 })).toBeTruthy();
       expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
       expect(view.getByRole("heading", { level: 2, name: "A situation like this" })).toBeTruthy();
+      expect(
+        view.getByRole("link", { name: "Open the Ada County Sample Plan" }).getAttribute("href"),
+      ).toBe("/plan/sample-ada-county");
+      expect(view.getByRole("link", { name: "Start your own site plan" }).getAttribute("href")).toBe(
+        "/plan/new",
+      );
       const text = container.textContent ?? "";
-      expect(text).not.toMatch(/Hero figures/);
-      expect(text).not.toMatch(/Every stat on this page is cited/);
-      expect(text).not.toMatch(/An illustrative scenario/);
       expect(text).toMatch(/Author: Escherbridge/);
       expect(text).toMatch(/Last reviewed: 2026-11-10, America\/Denver/);
+      expect(text).toMatch(/Map & legal note:/);
       expect(text).toMatch(/PlantGeo publishes no forecasts/);
       expect(text).toMatch(/not for sale yet/);
+      expect(text).not.toMatch(/returned HTTP 404/i);
+      expect(text).not.toMatch(/batch 1/i);
+      expect(text).not.toMatch(/PrimusNeo/i);
       expect(
         view.getAllByRole("link").some((link) => (link.getAttribute("href") ?? "") === "/site-types"),
       ).toBe(true);
@@ -465,7 +508,7 @@ describe("field guides", () => {
         const growing = view.getByRole("link", { name: "Aevani's growing guides" });
         expect(growing.getAttribute("href")).toBe("https://aevani.com/guides");
         expect(growing.getAttribute("rel") ?? "").not.toMatch(/nofollow/);
-        expect(growing.parentElement?.textContent ?? "").toMatch(/not for sale/);
+        expect(growing.parentElement?.textContent ?? "").toMatch(/not for sale yet/);
       }
       if (page.slug === "ready-wildfires") {
         expect(text).not.toMatch(/0 to 5 feet|5 to 30 feet|30 to 100 feet/);
@@ -473,6 +516,7 @@ describe("field guides", () => {
       const allowedExternal = new Set([
         ...page.sources.flatMap((source) => [source.url, ...(source.sameAs ?? [])]),
         "https://aevani.com/guides",
+        "https://aevani.com",
       ]);
       for (const link of view.getAllByRole("link")) {
         const href = link.getAttribute("href") ?? "";
@@ -480,7 +524,7 @@ describe("field guides", () => {
         expect(allowedExternal.has(href)).toBe(true);
       }
       expect(text).not.toMatch(/PlantGeo forecasts/i);
-      expect(text).not.toMatch(/referral share is \d/i);
+      expect(text).not.toMatch(/referral share is \d|referral[^\n]{0,40}\d+%/i);
       expect(text).not.toMatch(/PlantGeo recommends a policy/i);
       const graph = jsonGraph(container);
       const article = graph.find((node) => node["@type"] === "Article");

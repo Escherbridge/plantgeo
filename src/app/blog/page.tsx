@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { JsonLd } from "@/components/content/JsonLd";
+import { MapLegalNote, PlanFunnelGate } from "@/components/content/PlanFunnelGate";
 import {
   EditorialContainer,
   EditorialDisplay,
@@ -13,9 +14,9 @@ import { collectionStructuredData } from "@/lib/content/structured-data";
 import { ESSAY_AUTHOR } from "@/lib/writing/essay-metadata";
 import { blogPath, ESSAYS, essayDisplayDate } from "@/lib/writing/essays";
 
-const TITLE = "Blog — PlantGeo";
+const TITLE = "Field Blog — PlantGeo";
 const DESCRIPTION =
-  "Two notes from Escherbridge: what PlantGeo will not forecast, and how a site is planned before anything is bought for it.";
+  "Practical field walks and site-planning stories on reading sun, slope, drainage swales, frost pockets, wetlands, and soils before planting or building.";
 
 export const metadata: Metadata = {
   title: TITLE,
@@ -33,7 +34,7 @@ export default function BlogIndexPage() {
     <EditorialPage>
       <JsonLd
         data={collectionStructuredData({
-          name: "Blog",
+          name: "Field Blog",
           description: DESCRIPTION,
           path: "/blog",
           items: posts.map((essay) => ({ name: essay.title, path: blogPath(essay) })),
@@ -41,11 +42,15 @@ export default function BlogIndexPage() {
       />
       <EditorialContainer>
         <header className="pt-section pb-roomy">
-          <EditorialEyebrow>Blog</EditorialEyebrow>
-          <EditorialDisplay className="mt-comfortable">Notes</EditorialDisplay>
+          <EditorialEyebrow>Field Blog</EditorialEyebrow>
+          <EditorialDisplay className="mt-comfortable">
+            Notes from the ground
+          </EditorialDisplay>
           <EditorialProse className="mt-roomy">
             <p>
-              Dated notes from {ESSAY_AUTHOR}.{" "}
+              Practical guides and field walks for growers, homesteaders, master gardeners, and
+              site designers learning to read sun, slope, wet spots, frost pockets, and soil breaks
+              before staking beds or buying tools. Follow via{" "}
               <a
                 href="/feed.xml"
                 className="underline decoration-accent decoration-2 underline-offset-4"
@@ -55,6 +60,11 @@ export default function BlogIndexPage() {
               .
             </p>
           </EditorialProse>
+          <PlanFunnelGate
+            eyebrow="Start on the live map"
+            heading="Explore the Ada County sample parcel first"
+            body="See how bare-earth contours, low drainage swales, flood zones, and soil map units look together on real ground—or open a blank private plan for your own site."
+          />
         </header>
         <ul className="rule-top-heavy border-t-rule">
           {posts.map((essay) => (
@@ -76,6 +86,9 @@ export default function BlogIndexPage() {
             </li>
           ))}
         </ul>
+        <div className="pb-chapter">
+          <MapLegalNote includeCatalogueNote />
+        </div>
       </EditorialContainer>
     </EditorialPage>
   );

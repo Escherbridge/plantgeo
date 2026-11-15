@@ -3,9 +3,9 @@ import { CrawlableHome } from "@/components/home/CrawlableHome";
 import { HomeMap } from "@/components/home/HomeMap";
 
 export const metadata: Metadata = {
-  title: "PlantGeo — The whole map, unbundled",
+  title: "PlantGeo — Read sun, slope, drainage, and soils on your land",
   description:
-    "An open-source 3D map for planning a site, assembled from parts we run ourselves. The default basemap is a Pacific Northwest extract. PlantGeo publishes no forecasts.",
+    "An interactive 3D land-planning map for growers, homesteaders, and designers. Explore the live Ada County sample parcel, read field guides on drainage and microclimates, and start your own site plan. PlantGeo publishes no forecasts.",
 };
 
 export default function HomePage() {

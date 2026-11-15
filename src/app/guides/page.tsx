@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { JsonLd } from "@/components/content/JsonLd";
+import { MapLegalNote, PlanFunnelGate } from "@/components/content/PlanFunnelGate";
 import { SiteTypeBlocks } from "@/components/content/SiteTypeDocument";
 import {
   EditorialContainer,
@@ -46,9 +47,21 @@ export default function GuidesPage() {
           <EditorialEyebrow>{GUIDE_INDEX.eyebrow}</EditorialEyebrow>
           <EditorialDisplay className="mt-comfortable">{GUIDE_INDEX.h1}</EditorialDisplay>
         </header>
-        <EditorialProse className="pb-chapter">
+        <EditorialProse className="pb-comfortable">
           <SiteTypeBlocks blocks={GUIDE_INDEX.blocks} sources={GUIDE_INDEX.sources} />
         </EditorialProse>
+        <PlanFunnelGate
+          eyebrow="Explore live layers"
+          heading="See terrain, flood edges, wetlands, and soils on real ground"
+          body="Open the interactive Ada County sample plan to toggle official layers across one parcel, or start a private site plan for your own land."
+        />
+        <div className="pb-chapter">
+          <MapLegalNote
+            author={GUIDE_AUTHOR}
+            lastReviewed={GUIDE_INDEX.lastReviewed}
+            includeCatalogueNote
+          />
+        </div>
       </EditorialContainer>
     </EditorialPage>
   );

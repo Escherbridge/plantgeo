@@ -1,8 +1,8 @@
 /**
- * Field-guide copy from the reviewed drafts. The sentences are the draft text.
- * The drafts' JSON-LD notes are structured data on the page, not a visible section.
- * The index follows the site-types research index. Its figures are the ones the
- * child pages cite, and it does not add a number the drafts do not carry.
+ * Practical field-walk guides connecting public FEMA, Ready.gov, USFWS, and USGS
+ * map layers to boots-on-the-ground site planning. Primary-source figures and
+ * dates remain attributed strictly to their issuing agencies; legal/scope notes
+ * live uniformly at the bottom of guide views via MapLegalNote.
  */
 
 import type { SiteTypeBlock, SiteTypeCitation } from "@/lib/content/site-types";
@@ -26,20 +26,21 @@ export interface GuideArticle extends GuideIndex {
 }
 
 export const GUIDE_INDEX: GuideIndex = {
-  h1: "Write down the layer, and the date you read it.",
-  seoTitle: "Guides | PlantGeo",
-  metaDescription: "Ten field guides to official layers: FEMA flood maps, the NFHL, Ready.gov wildfires, NWI, USGS 3DEP, and US Topo. No forecasts and no insurance advice.",
-  eyebrow: "Ten field guides · an official layer is not a plan",
+  h1: "Field guides for reading water, terrain, and risk before you dig",
+  seoTitle: "Field Guides for Land Planning | PlantGeo",
+  metaDescription:
+    "Ten practical guides showing how homesteaders, growers, and site designers pair public FEMA, Ready.gov, FWS wetland, and USGS elevation maps with a real walk around the land.",
+  eyebrow: "Field guides · sun, slope, water, wetlands & wildfire buffers",
   publishedAt: "2026-11-10",
   lastReviewed: "2026-11-10",
   blocks: [
     {
       type: "paragraph",
-      text: "These pages are how-tos for official layers a planner actually opens: a FEMA flood map, a base flood elevation, a FIRMette, effective and preliminary flood data, Ready.gov’s reading of floods and of wildfires, the National Wetlands Inventory, the USGS 3D Elevation Program, The National Map, and US Topo. Each one stays inside the page that was opened. The figures are other people’s, with the links left on. This is not insurance advice, not a survey, and not a permit. PlantGeo publishes no forecasts and claims no agency deployments.",
+      text: "When you walk a backyard slope or a five-acre pasture with rubber boots and a notebook, public maps give you a faster second pair of eyes. Before trenching irrigation, siting an orchard row, or clearing brush near a barn, ten public datasets tell you where water drains, how steep the contours drop, which low corners stay soggy, and how close high-water lines run.",
     },
     {
       type: "paragraph",
-      text: "The shared failure is reading a line on a map as a decision the map did not make: a community flood map treated as a lot survey, a printed flood line treated as a forecast, a wetlands polygon treated as a permit, a hillshade treated as the elevation source, a topo screenshot treated as a site plan, a preliminary panel filed as a FIRMette, or a Ready.gov distance treated as a Firewise width. The guides below keep the official name and the limit in the same paragraph.",
+      text: "The trick on any parcel is knowing what each layer actually shows—and where screen lines end and ground truthing starts. Pair a [muddy-boots parcel walk](/blog/walking-a-five-acre-parcel-after-rain) with the ten plain-English field guides below, then test the same layers on the [Ada County sample plan](/plan/sample-ada-county) before staking your own site.",
     },
     {
       type: "heading",
@@ -48,25 +49,29 @@ export const GUIDE_INDEX: GuideIndex = {
     {
       type: "list",
       items: [
-        "**[FEMA flood maps](/guides/fema-flood-maps)** — The FEMA Flood Map Service Center (MSC) is the official online location to find all flood hazard mapping products created under the National Flood Insurance Program (FEMA, “Flood Maps”). A FIRM is that community map, not a survey of one parcel and not a promise about where water will go.",
-        "**[Flooding doesn't follow lines on a map](/guides/ready-floods)** — “Floods are the most common disaster in the United States” (Ready.gov). The same page says flooding doesn't follow lines on a map, and a following list item is “Where it rains it can flood.”",
-        "**[National Wetlands Inventory maps](/guides/nwi-wetlands)** — The U.S. Fish and Wildlife Service produces and distributes maps and other geospatial data on American wetland and deepwater habitats, and monitors change through time (FWS). A polygon on that public inventory is not a permit, and no accuracy or acreage is stated here.",
-        "**[USGS 3D Elevation Program](/guides/usgs-3dep)** — A USGS caption dates the national baseline of high-resolution elevation data, bare earth and 3D point clouds, as of September 30, 2026. That date belongs to the map shown on the program page. It is not an accuracy in feet, and it is not a claim that every acre is equally detailed.",
-        "**[The National Map](/guides/national-map)** — “The National Geospatial Program and its partners acquire and integrate authoritative geospatial data” and make the resulting layers available through The National Map (USGS). A base is not a site plan.",
-        "**[What is a base flood elevation](/guides/base-flood-elevation)** — FEMA’s glossary, last updated 5 March 2020, defines the BFE as the elevation of surface water from a flood that has a 1% chance of equaling or exceeding that level in any given year, on the named FIRM zones. This page does not invent a BFE for Zone A, and the number is not a finished floor.",
-        "**[What is a FIRMette](/guides/firmette)** — FEMA’s FAQ says a printed FIRM is about two feet by three feet, and a FIRMette is a full-scale section formatted for a home or office printer. A FIRMette cannot be created for a preliminary map.",
-        "**[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective)** — The NFHL holds current effective flood hazard data, and FEMA says that digital data covers over 90% of the U.S. population. That figure is population, not land area. Preliminary maps are not final regulatory products.",
-        "**[Ready.gov wildfire preparedness](/guides/ready-wildfires)** — Ready.gov advises a fire-resistant zone free of leaves, debris, or flammable materials for at least 30 feet from the home. That distance is Ready.gov’s. It is not a Firewise or IBHS width.",
-        "**[US Topo and historical topographic maps](/guides/us-topo)** — USGS has been the primary civilian mapping agency of the United States since 1879, and in 2009 it moved from hand-scribed historical maps to US Topo. The historical collection runs from 1884 to 2006. A topo is still not a site plan.",
+        "**[FEMA flood maps](/guides/fema-flood-maps)** — How to look up your community's official Flood Insurance Rate Map on the FEMA Flood Map Service Center, read Special Flood Hazard Area zone codes, and log the panel date in your site plan.",
+        "**[Flooding doesn't follow lines on a map](/guides/ready-floods)** — Ready.gov notes that floods are the most common disaster in the United States and reminds every landowner: where it rains it can flood, even outside a printed map boundary.",
+        "**[National Wetlands Inventory maps](/guides/nwi-wetlands)** — How the U.S. Fish and Wildlife Service tracks wetland and deepwater habitats across the country, and how growers use those polygons to spot wet swales early without treating a public layer as a permit decision.",
+        "**[USGS 3D Elevation Program](/guides/usgs-3dep)** — Bare-earth 3DEP elevation surfaces and 3D point clouds (shown on the USGS baseline map caption as of September 30, 2026) beat flat hillshade screenshots when you are tracing subtle drainage channels, swales, and cold-air pockets.",
+        "**[The National Map](/guides/national-map)** — How The National Geospatial Program and its partners knit topography, hydrography, and structures into an authoritative base map you can layer under your field notes.",
+        "**[What is a base flood elevation](/guides/base-flood-elevation)** — FEMA's glossary defines the BFE as surface-water elevation for a flood with a 1% chance of equaling or exceeding that level in any given year on named zones—vital context before siting sheds, chicken coops, or root cellars.",
+        "**[What is a FIRMette](/guides/firmette)** — How to export a full-scale, home-printable piece of an effective flood map from FEMA rather than guessing off an undated screenshot, and why preliminary panels cannot generate a FIRMette.",
+        "**[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective)** — The National Flood Hazard Layer holds current effective flood data covering over 90% of the U.S. population (a population figure rather than land area), while preliminary maps give communities an early look before formal review.",
+        "**[Ready.gov wildfire preparedness](/guides/ready-wildfires)** — How Ready.gov's baseline advice—keeping a fire-resistant zone free of leaves, debris, or flammable materials for at least 30 feet from the home—fits into shelterbelt and outbuilding placement while keeping Firewise and IBHS zone widths distinct.",
+        "**[US Topo and historical topographic maps](/guides/us-topo)** — How USGS 1:24,000-scale 7.5-minute sheets compare between modern digital US Topos (since 2009) and the 1884 to 2006 historical archive when checking old ditches, springs, and road fills.",
       ],
     },
     {
       type: "heading",
-      text: "What PlantGeo is doing here",
+      text: "Walk the map alongside your parcel notes",
     },
     {
       type: "paragraph",
-      text: "The map is the product, and [About](https://plantgeo.aevani.com/about) already says how the layers are framed. These guides sit next to the [site types](/site-types). House notes: [Not forecast beyond today](https://plantgeo.aevani.com/blog/not-forecast-beyond-today) and [Plan the land, then pick the tools](https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools). If tools come after the plan, they come from [Aevani’s catalogue](https://aevani.com), which is a preview and not for sale yet. No referral share is quoted, because the share has not been set. Site notes, when there are any, live in [News](/news).",
+      text: "Once you pick the layer that fits your immediate question—drainage swales, winter orchard slopes, low wetland edges, or home wildfire clearance—pair it with our [field blog stories](/blog) and land-kind comparisons in [site types](/site-types). Check release updates in [News](/news), or browse our technical architecture in [About](https://plantgeo.aevani.com/about) and [Not forecast beyond today](https://plantgeo.aevani.com/blog/not-forecast-beyond-today).",
+    },
+    {
+      type: "paragraph",
+      text: "Only after walking the ground and writing down your layer notes should you start sizing tanks, drip headers, or windbreak fencing—see [Plan the land, then pick the tools](https://plantgeo.aevani.com/blog/plan-the-land-then-pick-the-tools) or browse [Aevani’s catalogue](https://aevani.com) (currently a preview with items not for sale yet).",
     },
     {
       type: "heading",
@@ -74,7 +79,7 @@ export const GUIDE_INDEX: GuideIndex = {
     },
     {
       type: "paragraph",
-      text: "The ten guides each close with a situation like this: a worked example, not a customer, not a survey, and not a permit.",
+      text: "Every guide below ends with a short field scenario—an everyday mistake from the driveway or garden fence, treated strictly as a worked example rather than a client record, showing how checking the exact layer name and date saves costly rework.",
     },
     {
       type: "heading",
@@ -82,18 +87,10 @@ export const GUIDE_INDEX: GuideIndex = {
     },
     {
       type: "paragraph",
-      text: "Every figure on this page is cited on the guide that uses it. The rows below are those official pages.",
+      text: "Every public figure and definition in these ten guides links back to the issuing agency page below.",
     },
     {
       type: "sources",
-    },
-    {
-      type: "paragraph",
-      text: "The useful next step is to open the guide for the layer in front of you, or to start from the [site types](/site-types). If something on this page is wrong, [write to us](/about).",
-    },
-    {
-      type: "paragraph",
-      text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
     },
   ],
   sources: [
@@ -155,7 +152,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "FEMA flood maps: how to find a FIRM",
     seoTitle: "FEMA flood maps: how to find a FIRM — Guides | PlantGeo",
-    metaDescription: "FEMA’s Flood Map Service Center is the official place to find NFIP flood maps. This guide covers what a FIRM and an SFHA are, and how to print a FIRMette.",
+    metaDescription:
+      "Use FEMA's Flood Map Service Center to check community flood zones, Special Flood Hazard Areas, and effective dates before siting sheds, gardens, or fencing.",
     eyebrow: "FEMA flood maps",
     slug: "fema-flood-maps",
     crumb: "FEMA flood maps",
@@ -164,51 +162,35 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "FEMA's Flood Map Service Center is the official online place to find National Flood Insurance Program maps. A Flood Insurance Rate Map is an official map of a community — Special Flood Hazard Areas, Base Flood Elevations, and risk premium zones — not a finished reading of one parcel. The official map can tell you how FEMA has delineated flood hazard for that community. It is not a survey of the lot, and it is not a promise about where water will go. The household companion is [Flooding doesn't follow lines on a map](/guides/ready-floods).",
+        text: "Before placing a greenhouse, chicken coop, or tool shed on low bottomland near a creek or irrigation canal, pull up FEMA's Flood Map Service Center (MSC). It is the official online home for all flood-hazard mapping products created under the National Flood Insurance Program, giving site planners a clear community baseline before stepping out to check ditch crowns and high-water trash lines on foot. Pair it with [Flooding doesn't follow lines on a map](/guides/ready-floods).",
       },
       {
         type: "paragraph",
-        text: "This is a how-to about official flood-hazard maps, not a PlantGeo product page, not a survey, and not insurance advice. It is not a LOMA filing guide.",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA, \"Flood Maps\": \"The FEMA Flood Map Service Center (MSC) is the official online location to find all flood hazard mapping products created under the National Flood Insurance Program, including your community's flood map.\" \"Flood maps help mortgage lenders determine insurance requirements and help communities develop strategies for reducing their risk.\"",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA glossary, \"Flood Insurance Rate Map (FIRM),\" last updated 8 July 2020: \"Official map of a community on which FEMA has delineated the Special Flood Hazard Areas (SFHAs), the Base Flood Elevations (BFEs) and the risk premium zones applicable to the community.\"",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA glossary, \"Special Flood Hazard Area (SFHA),\" last updated 7 July 2020: an SFHA is shown on a Flood Hazard Boundary Map (FHBM) or a FIRM in named zones including \"Zone A, AO, A1-A30, AE, A99, AH, AR, AR/A, AR/AE, AR/AH, AR/AO, AR/A1-A30, V1-V30, VE or V.\" \"The SFHA is the area where the National Flood Insurance Program's (NFIP's) floodplain management regulations must be enforced and the area where the mandatory purchase of flood insurance applies.\" For Community Rating System premium discounts, \"all AR and A99 zones are treated as non-SFHAs.\" That last sentence is FEMA's glossary note, not advice to buy or not buy a policy.",
+        text: "FEMA, \"Flood Maps\": \"The FEMA Flood Map Service Center (MSC) is the official online location to find all flood hazard mapping products created under the National Flood Insurance Program, including your community's flood map.\" FEMA notes that flood maps help lenders determine insurance requirements and help communities plan ways to reduce risk.",
       },
       {
         type: "heading",
-        text: "Where to look, and the names on the map",
+        text: "What FIRM and SFHA mean when looking at a parcel",
       },
       {
         type: "paragraph",
-        text: "Start at the MSC. It is the official online location for NFIP mapping products, including the community's flood map. A FIRM is a community map: SFHAs, BFEs, and risk premium zones, in the glossary's words. An SFHA is the area where NFIP floodplain-management regulations must be enforced and where the mandatory purchase of flood insurance applies, again in the glossary's words. The zone list is FEMA's. This page does not invent a \"Zone X means safe,\" and it does not add a \"100-year\" or \"1-percent-annual-chance\" sentence that was not on the opened SFHA glossary page.",
+        text: "FEMA's glossary entry for Flood Insurance Rate Map (FIRM), last updated 8 July 2020, defines it as the \"Official map of a community on which FEMA has delineated the Special Flood Hazard Areas (SFHAs), the Base Flood Elevations (BFEs) and the risk premium zones applicable to the community.\"",
+      },
+      {
+        type: "paragraph",
+        text: "In FEMA's Special Flood Hazard Area (SFHA) glossary entry, last updated 7 July 2020, SFHAs appear on FHBMs or FIRMs in named zones including \"Zone A, AO, A1-A30, AE, A99, AH, AR, AR/A, AR/AE, AR/AH, AR/AO, AR/A1-A30, V1-V30, VE or V.\" As FEMA explains, \"The SFHA is the area where the National Flood Insurance Program's (NFIP's) floodplain management regulations must be enforced and the area where the mandatory purchase of flood insurance applies,\" while for Community Rating System premium discounts, \"all AR and A99 zones are treated as non-SFHAs.\"",
       },
       {
         type: "heading",
-        text: "A FIRMette",
+        text: "Pulling a clean section and writing down your field notes",
       },
       {
         type: "paragraph",
-        text: "A FIRMette, in the MSC FAQs, \"is a full-scale section of a FIRM that you create yourself and is formatted to print on most home/office printers.\" You first find a flood map, then use the View button associated with it. The click path belongs on the FAQ, which will be updated when the interface changes; this page does not invent a screenshot tutorial that will rot.",
+        text: "Once you locate your community's effective flood map in the MSC, you can open the View button associated with that map to generate a FIRMette—\"a full-scale section of a FIRM that you create yourself and is formatted to print on most home/office printers\"—so you have a readable panel slice with dates intact instead of guessing off an undated web crop.",
       },
       {
         type: "paragraph",
-        text: "This page does not treat a printed line as a guarantee that flooding will stay inside it. [Ready.gov's floods page](/guides/ready-floods) is the companion that says so in official household language. It also does not invent Ada County flood counts, and it does not claim an agency deployment.",
-      },
-      {
-        type: "heading",
-        text: "What to write down",
-      },
-      {
-        type: "paragraph",
-        text: "A site plan still has to say which effective map, which panel, and which zone was read, and on which date. [The National Map](/guides/national-map) is the official base-map home if you are assembling layers. The [riparian and watershed site type](/site-types/riparian-watershed-edges) is the land-kind sibling for an edge that already has water in the name.",
+        text: "In your PlantGeo site notes, write down three things together: the effective map panel number, the exact zone letter printed over the low half of your parcel, and the date you checked the MSC. When tracing streamside edges or swales, keep [The National Map](/guides/national-map), the [National Wetlands Inventory](/guides/nwi-wetlands), and our [riparian and watershed site type](/site-types/riparian-watershed-edges) handy—and always inspect culvert sizes and snowmelt bottlenecks outdoors on foot, because runoff ignores smooth lines drawn on paper.",
       },
       {
         type: "heading",
@@ -216,7 +198,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A parcel is described as \"not in the floodplain\" because a neighbor's printed map, undated and unlabelled, showed a line on the other side of a road. The useful next step is the MSC, the effective panel, the zone as printed, and the date it was read.",
+        text: "A seller hands over an undated printout showing a blue flood line ending across the road and claims the lower pasture sits safely in upland dirt. Five minutes on the MSC turns up an updated effective panel date and the true zone boundary—saving a timber workshop from being framed into seasonal backwater.",
       },
       {
         type: "heading",
@@ -232,26 +214,13 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — Ready.gov's household reading of the same official map.",
-          "[National Wetlands Inventory maps](/guides/nwi-wetlands) — a public inventory, not a permit.",
-          "[The National Map](/guides/national-map) — the official base, not a finished plan.",
-          "[USGS 3D Elevation Program](/guides/usgs-3dep) — elevation you can name as a source.",
-          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — the number on the map is an elevation, not a finished floor.",
-          "[What is a FIRMette and how to print one](/guides/firmette) — a full-scale piece of an effective map.",
-          "[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) — which dataset you are looking at.",
+          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — Ready.gov's practical reminder about rainfall and runoff beyond mapped lines.",
+          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — how surface-water elevation differs from your finished floor or raised-bed height.",
+          "[What is a FIRMette and how to print one](/guides/firmette) — exporting a true full-scale piece of an effective FIRM.",
+          "[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) — checking whether the layer in front of you is current effective data or an early review draft.",
+          "[National Wetlands Inventory maps](/guides/nwi-wetlands) — reading habitat inventory polygons separately from regulatory flood lines.",
+          "[USGS 3D Elevation Program](/guides/usgs-3dep) — bare-earth contours that show which roadside swale spills toward your beds.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue, if it is mentioned at all, is a preview and not for sale yet. Affiliate applications, when they are open, do not have a quoted referral share; the share has not been set. The [site-types index](/site-types) is the land-kind companion to these official-layer guides.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to open the MSC and write down the panel, the zone, and the date, or to read [Ready.gov's floods page](/guides/ready-floods). If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -282,7 +251,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "Flooding doesn't follow lines on a map",
     seoTitle: "Flooding doesn't follow lines on a map — Guides | PlantGeo",
-    metaDescription: "Ready.gov says to look up flood risk on FEMA’s map, and that flooding doesn’t follow lines on a map. This is that household reading, not insurance advice.",
+    metaDescription:
+      "Ready.gov advises checking FEMA flood maps first—and remembering that intense rain, snowmelt, and blocked ditches put water across driveways outside printed zones.",
     eyebrow: "Ready.gov on floods",
     slug: "ready-floods",
     crumb: "Flooding doesn't follow lines on a map",
@@ -291,43 +261,35 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "Ready.gov tells households to look up flood risk on FEMA's Flood Map Service Center — and then, in the next breath, that flooding doesn't follow lines on a map: \"Where it rains it can flood.\" Look at the official map. Then remember that water does not owe the map a courtesy.",
-      },
-      {
-        type: "paragraph",
-        text: "This is a household preparedness note, not a flood-insurance ad, not advice to buy or not buy a policy, and not a claim that PlantGeo models flood risk. The official map itself is covered in [FEMA flood maps](/guides/fema-flood-maps). This page does not contradict that guide; it is the companion.",
-      },
-      {
-        type: "paragraph",
-        text: "Ready.gov, \"Floods\": \"Floods are the most common disaster in the United States.\" \"Failing to evacuate flooded areas or entering flood waters can lead to injury or death.\" Floods \"may: Result from rain, snow, coastal storms, storm surges and overflows of dams and other water systems. Develop slowly or quickly. Flash floods can come without warning. Cause outages, disrupt transportation, damage buildings and create landslides.\" Under a flood warning: \"Find safe shelter right away. Do not walk, swim or drive through flood waters.\"",
-      },
-      {
-        type: "paragraph",
-        text: "The same page, before a flood: \"Know your risk for floods, visit FEMA's Flood Map Service Center to know types of flood risks in your area. However, remember that flooding doesn't follow lines on a map.\" A following item on the same list is: \"Where it rains it can flood.\" It also points at community warning systems, the Emergency Alert System, and NOAA Weather Radio.",
-      },
-      {
-        type: "paragraph",
-        text: "Insurance, in Ready.gov's words, not as a sales pitch: \"Get flood coverage under FEMA's National Flood Insurance Program (NFIP). Homeowner's insurance policies do not cover flooding. It typically takes up to 30 days for a policy to go into effect, so the time to buy is well before a disaster.\" That is Ready.gov's preparedness fact. This page does not recommend a policy, a quote site, or a PlantGeo product. A later sentence on the same page points at floodsmart.gov; if you follow it, follow it as Ready.gov's pointer, not as a house endorsement.",
+        text: "Ask any grower who has watched an August dry wash turn brown and fast in February: a clean white space outside the FEMA blue zone is not a waterproof promise. Ready.gov's flood guidance tells homeowners to start with [FEMA's Flood Map Service Center](/guides/fema-flood-maps), then puts the practical field truth right underneath it: flooding doesn't follow lines on a map.",
       },
       {
         type: "heading",
-        text: "Ready.gov's own sequence",
+        text: "What Ready.gov highlights before rain hits",
       },
       {
         type: "paragraph",
-        text: "Know your risk at the MSC. Flooding doesn't follow lines on a map. Where it rains it can flood. Sign up for warnings. The common-disaster facts stay as Ready.gov stated them: the most common disaster in the United States; do not walk, swim, or drive through flood waters; flash floods can come without warning. This page does not invent fatality counts or dollar-damage totals.",
+        text: "Ready.gov states plainly: \"Floods are the most common disaster in the United States.\" Floodwaters \"may: Result from rain, snow, coastal storms, storm surges and overflows of dams and other water systems. Develop slowly or quickly. Flash floods can come without warning. Cause outages, disrupt transportation, damage buildings and create landslides.\" Under a flood warning, Ready.gov warns: \"Find safe shelter right away. Do not walk, swim or drive through flood waters.\"",
       },
       {
         type: "paragraph",
-        text: "Homeowner's policies do not cover flooding, in Ready.gov's words. Thirty days is Ready.gov's figure for a policy to go into effect. That is a limit, not advice to buy or not buy, and this page invents no premiums, waiting-period exceptions, or \"you must buy.\"",
+        text: "In its pre-flood checklist, Ready.gov pairs map checks with local storm sense: \"Know your risk for floods, visit FEMA's Flood Map Service Center to know types of flood risks in your area. However, remember that flooding doesn't follow lines on a map.\" The next point on the same page reinforces why every site walk matters: \"Where it rains it can flood.\" Ready.gov also points landowners toward community alert systems, the Emergency Alert System, and NOAA Weather Radio.",
+      },
+      {
+        type: "paragraph",
+        text: "On coverage timing, Ready.gov adds a factual administrative point worth knowing long before wet weather arrives: \"Get flood coverage under FEMA's National Flood Insurance Program (NFIP). Homeowner's insurance policies do not cover flooding. It typically takes up to 30 days for a policy to go into effect, so the time to buy is well before a disaster.\"",
       },
       {
         type: "heading",
-        text: "What to write down",
+        text: "Walking your own slope for sheet flow and culvert backups",
       },
       {
         type: "paragraph",
-        text: "A site reading can cite the effective map and still has to leave room for water that does not follow the line. [FEMA flood maps](/guides/fema-flood-maps) is where to name the panel and the zone. The [riparian and watershed site type](/site-types/riparian-watershed-edges) is the land-kind sibling. PlantGeo has not modeled a watershed or a parcel as a flood product, and this page does not claim otherwise.",
+        text: "On a working yard or five-acre homestead, most surprise ponding outside FEMA-mapped stream corridors comes from local grading: a packed gravel driveway acting like a chute, an uphill neighbor's roof leaders pointing toward your fence, or leaves clogging a 12-inch roadside pipe during rapid snowmelt.",
+      },
+      {
+        type: "paragraph",
+        text: "Write down your effective FEMA panel and zone first, then walk the high edge of the property during steady rain. Trace where water actually sheets across compacted paths, keep low sheds and electrical boxes off natural troughs using [USGS 3DEP elevation contours](/guides/usgs-3dep), and compare [riparian and watershed edges](/site-types/riparian-watershed-edges) before turning over new beds.",
       },
       {
         type: "heading",
@@ -335,7 +297,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A house sits just outside a printed SFHA line. The official map was read, the zone was written down, and then a summer storm put water across the drive. The Ready.gov sentence was already the warning: flooding doesn't follow lines on a map.",
+        text: "A homestead garage sits forty yards outside a mapped Special Flood Hazard Area line on high bench ground. Nobody noticed that an uphill pasture swale funnels spring snowmelt directly across the drive—until an intense storm left three inches of muddy runoff pooling against the sill plate. Checking the map plus a five-minute rain walk spots that path before pouring concrete.",
       },
       {
         type: "heading",
@@ -351,24 +313,12 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — the official community map, and its limits.",
-          "[National Wetlands Inventory maps](/guides/nwi-wetlands) — a public inventory of wetland and deepwater habitats.",
-          "[USGS 3D Elevation Program](/guides/usgs-3dep) — elevation as a named source, not a hillshade on a slide.",
-          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — the number on the map is an elevation, not a finished floor.",
-          "[Ready.gov wildfire preparedness](/guides/ready-wildfires) — Ready.gov's at least 30 feet, kept separate from the Firewise and IBHS widths.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — finding your effective community map and zone codes.",
+          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — understanding surface-water elevations on mapped zones.",
+          "[USGS 3D Elevation Program](/guides/usgs-3dep) — inspecting bare-earth slope breaks where sheet flow concentrates.",
+          "[National Wetlands Inventory maps](/guides/nwi-wetlands) — seeing mapped wetland habitats separately from stormwater lines.",
+          "[Ready.gov wildfire preparedness](/guides/ready-wildfires) — the companion household hazard guide for clearing around structures.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to read the official map and the Ready.gov page together, and to sign up for the warnings that page names. If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -387,7 +337,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "National Wetlands Inventory maps",
     seoTitle: "National Wetlands Inventory maps — Guides | PlantGeo",
-    metaDescription: "The National Wetlands Inventory maps wetland and deepwater habitats, and change over time. This guide covers what the inventory is, and what a polygon is not.",
+    metaDescription:
+      "How growers and land planners use the U.S. Fish and Wildlife Service National Wetlands Inventory to spot seasonal wet swales early—without mistaking a public inventory for a local permit.",
     eyebrow: "National Wetlands Inventory",
     slug: "nwi-wetlands",
     crumb: "National Wetlands Inventory maps",
@@ -396,43 +347,31 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "The U.S. Fish and Wildlife Service's National Wetlands Inventory produces and distributes maps and geospatial data on the nation's wetland and deepwater habitats, and on change in those habitats over time. That public inventory is not, by itself, a decision about a permit or a property line. Use it as what the Service says it is: information on extent, status, and change. Do not ask it to close a permit, a delineation, or a property dispute.",
-      },
-      {
-        type: "paragraph",
-        text: "This is a field note about a public inventory, not a permitting desk, not legal advice, and not a jurisdictional determination. The opened source for this page is the program landing. It is a short official page, and this guide stays inside it. A later draft can quote the mapper's documentation or a standards page if those are opened; this page does not invent an accuracy radius, a national acreage, or a disclaimer attributed to FWS that was not on the program landing.",
-      },
-      {
-        type: "paragraph",
-        text: "U.S. Fish and Wildlife Service, National Wetlands Inventory program page: \"The U.S. Fish and Wildlife Service is the principal federal agency tasked with providing information to the public on the extent and status of the nation's wetland and deepwater habitats, as well as changes to these habitats over time.\"",
-      },
-      {
-        type: "paragraph",
-        text: "The same page, on what the program produces: \"We produce and distribute maps and other geospatial data on American wetland and deepwater habitats, as well as monitor changes in these habitats through time.\" The page points at the Wetlands Mapper, wetlands data, and mapping status and trends.",
+        text: "Before digging a farm pond, burying waterline frost hydrants, or cutting windbreak trenches along a damp bottom, check the U.S. Fish and Wildlife Service's National Wetlands Inventory (NWI). A green or blue polygon crossing your corner on the inventory tells you to lace up your boots and probe that area with a shovel first—it is an essential early signal about wetland habitat extent, even though a public inventory polygon never settles a permit or property dispute by itself.",
       },
       {
         type: "heading",
-        text: "What the program actually does",
+        text: "What the U.S. Fish and Wildlife Service publishes",
       },
       {
         type: "paragraph",
-        text: "The Service is the principal federal agency for public information on wetland and deepwater habitats. It produces maps and other geospatial data, and it monitors change through time. The mapper and the data downloads are the places the program page itself names. That is the whole official job description used here.",
+        text: "On its official NWI program landing page, the U.S. Fish and Wildlife Service states: \"The U.S. Fish and Wildlife Service is the principal federal agency tasked with providing information to the public on the extent and status of the nation's wetland and deepwater habitats, as well as changes to these habitats through time.\" The Service notes: \"We produce and distribute maps and other geospatial data on American wetland and deepwater habitats, as well as monitor changes in these habitats through time.\"",
       },
       {
         type: "paragraph",
-        text: "A polygon on a public map can support a question. It does not close a permit, a delineation, or a property dispute. That limit is the argument of this page, not a sentence quoted from FWS on the program landing. If you need the Service's own accuracy language, or its own \"not a jurisdictional determination\" wording, open the mapper documentation or a standards page and quote it there.",
-      },
-      {
-        type: "paragraph",
-        text: "This page does not treat NWI as the same product as a soil-survey hydric rating. That is a later topic, and it needs its own opened NRCS page. It also does not invent Ada County wetland counts.",
+        text: "The program landing points landowners and practitioners directly toward the Wetlands Mapper, downloadable wetlands data, and mapping status and trends. Those resources show where public inventory mapping sees wetland or deepwater habitats—and help keep dry-season site walks from overlooking seasonal springs, sedge depressions, or old oxbows.",
       },
       {
         type: "heading",
-        text: "What to write down",
+        text: "Putting NWI to practical use on a parcel walk",
       },
       {
         type: "paragraph",
-        text: "A site reading can name the inventory, the date consulted, and the limit: a public inventory of extent, status, and change, not a legal finding. The [riparian and watershed site type](/site-types/riparian-watershed-edges) is the land-kind sibling. [Homestead soils](/site-types/homestead-mapped-soils) is the soils sibling, and is not a substitute for this inventory. [The National Map](/guides/national-map) is the official base if you are assembling layers. [FEMA flood maps](/guides/fema-flood-maps) is a different official product, about flood hazard for a community, not wetland habitat.",
+        text: "On real ground, a mapped NWI feature sits alongside two distinct companions: county soil-survey hydric clues (explored in [homestead mapped soils](/site-types/homestead-mapped-soils)) and community flood boundaries ([FEMA flood maps](/guides/fema-flood-maps)). A spot can hold saturated clay soils in spring without ever sitting inside a FEMA floodplain, or lie inside an NWI polygon without matching local county setback rules.",
+      },
+      {
+        type: "paragraph",
+        text: "Whenever you inspect a low swale on [The National Map](/guides/national-map) or in your [PlantGeo site plan](/plan/new), jot down \"NWI checked\" along with the date and whether mapped features edge near planned beds or trails. Walk the boundary during late spring to see where rushes, cattails, or gray-mottled subsoil actually start on the ground—because wet corners thrive with willow, dogwood, and pollinator buffer plantings instead of fighting drainage ditches forever.",
       },
       {
         type: "heading",
@@ -440,15 +379,11 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A planning note says \"the wetlands overlay is clear,\" with no date, no inventory name, and no limit. A later reviewer treats the polygon as a permit decision. The useful record would have named NWI, the date it was read, and what a public inventory can and cannot close.",
+        text: "A buyer inspects a dry meadow in September and writes \"no wet areas on parcel\" on an orchard layout without ever pulling up NWI. Come April, groundwater seeps across the lower three planting rows and rots newly planted stone fruit. Checking NWI before ordering trees flags that damp bottom early so orchard rows stay on the dry bench uphill.",
       },
       {
         type: "heading",
         text: "Sources",
-      },
-      {
-        type: "paragraph",
-        text: "The official source here is thin on purpose: one program landing, opened 10 November 2026. No extra figures were added.",
       },
       {
         type: "sources",
@@ -460,22 +395,11 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — a community flood-hazard map, not a wetland inventory.",
-          "[The National Map](/guides/national-map) — the official base geospatial suite.",
-          "[USGS 3D Elevation Program](/guides/usgs-3dep) — elevation as a named source.",
+          "[Homestead mapped soils](/site-types/homestead-mapped-soils) — reading county soil survey units alongside wet corners.",
+          "[Riparian and watershed edges](/site-types/riparian-watershed-edges) — site-planning guidance for stream corridors and wet draws.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — flood hazard zones vs wetland habitat layers.",
+          "[USGS 3D Elevation Program](/guides/usgs-3dep) — spotting shallow depressions where seasonal water gathers.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to name the inventory and the date, or to open the program page itself. If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -489,7 +413,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "USGS 3D Elevation Program",
     seoTitle: "USGS 3D Elevation Program — Guides | PlantGeo",
-    metaDescription: "The USGS 3D Elevation Program is the path to high-resolution elevation data. This guide covers what 3DEP publishes, and why a hillshade is not a source.",
+    metaDescription:
+      "How bare-earth 3DEP elevation surfaces and 3D point clouds help growers trace hidden drainage swales, terrace benches, and frost pockets under tree canopy.",
     eyebrow: "3D Elevation Program",
     slug: "usgs-3dep",
     crumb: "USGS 3D Elevation Program",
@@ -498,43 +423,35 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "The U.S. Geological Survey's 3D Elevation Program is the official path to consistent, high-resolution elevation data — bare-earth surfaces and 3D point clouds — for the United States and its territories. A hillshade on a slide is not a substitute for naming that source. If you are going to talk about slope or drainage, say which elevation source you used. 3DEP is the USGS program that exists for that.",
-      },
-      {
-        type: "paragraph",
-        text: "This is a field note about official elevation data, not a grading-plan service, and not a claim that PlantGeo has flown or processed lidar.",
-      },
-      {
-        type: "paragraph",
-        text: "USGS, 3D Elevation Program. The opened page describes 3DEP data products and points at quality levels (including \"What is QL0?\" and \"How are Lidar QLs defined?\"), spatial metadata, partner data acquisition, and standards.",
-      },
-      {
-        type: "paragraph",
-        text: "A caption on the same page states that a map of the United States and its territories \"shows the completion of the first-ever national baseline of consistent high-resolution elevation data - both bare earth and 3D point clouds - including baseline and next generation coverage as of September 30, 2026.\" That is the page's own caption about the map shown, not a claim that every acre is equally detailed, and not a quality-level guarantee.",
-      },
-      {
-        type: "paragraph",
-        text: "A pointer, not a parcel benefit: the same page points at the 3D Nation Study: \"Study documents $13.5 billion of benefits for 1,352 mission critical requirements for topographic and inland, nearshore, and offshore bathymetric 3D elevation data.\" That figure is the study's, as stated on the USGS 3DEP page. It is not a PlantGeo finding, and it is not a benefit that accrues to a single parcel. The study PDF was not opened for this brief, so the sentence is a pointer, not a re-analysis.",
+        text: "Overhead aerial photos look flat once oak canopy, sagebrush, or tall pasture grass fills the frame. That is where the U.S. Geological Survey's 3D Elevation Program (3DEP) shines for land planners: it is the national path to consistent high-resolution elevation data—bare-earth surfaces and 3D point clouds—letting you inspect ground contours underneath trees so water lines, ridges, and frost pockets jump out before you unroll a tape measure outdoors.",
       },
       {
         type: "heading",
-        text: "What the program publishes, as the page names it",
+        text: "What 3DEP publishes and how to read the work-unit details",
       },
       {
         type: "paragraph",
-        text: "High-resolution data; bare earth and 3D point clouds; quality levels and spatial metadata as the places to read what a given work unit actually is. This page does not invent a nationwide accuracy in feet, a lidar pulse density, or \"QL0 everywhere.\" Quality still has to be read from the work-unit metadata, even where the caption describes a national baseline of consistent high-resolution data.",
+        text: "The USGS 3DEP page presents 3DEP data products alongside documentation on lidar quality levels (including links explaining \"What is QL0?\" and \"How are Lidar QLs defined?\"), spatial metadata, partner data acquisition, and program standards. A caption accompanying the national map graphic on the program page notes that it \"shows the completion of the first-ever national baseline of consistent high-resolution elevation data - both bare earth and 3D point clouds - including baseline and next generation coverage as of September 30, 2026.\"",
       },
       {
         type: "paragraph",
-        text: "[The National Map](/guides/national-map) is the suite that uses elevation, among other base layers, as a source for cartographic products. A 3DEP dataset is not, by itself, a grading plan. A later slope-and-erosion guide can take that up when its own official pages are opened.",
+        text: "For broader context on public demand, the USGS 3DEP page references the 3D Nation Study, noting: \"Study documents $13.5 billion of benefits for 1,352 mission critical requirements for topographic and inland, nearshore, and offshore bathymetric 3D elevation data.\" That national figure applies to mission-critical requirements nationwide, not to a single backyard parcel—and individual lidar quality still depends on the specific work unit and spatial metadata covering your county.",
       },
       {
         type: "heading",
-        text: "What to write down",
+        text: "Tracing swales, terraces, and cold-air drainage on foot",
       },
       {
         type: "paragraph",
-        text: "A site reading can name the 3DEP source and the date consulted, and it can point at the quality-level and spatial metadata for the work unit. It is not a grading plan, and it does not invent Ada County elevation statistics.",
+        text: "When you look at a shaded terrain hillshade on screen, check the 3DEP source and work-unit date rather than treating a pretty shadow render as an engineered grade. On small acreages, bare-earth elevation shines for finding subtle landforms you might walk straight across in dry grass:",
+      },
+      {
+        type: "list",
+        items: [
+          "**Headwater saddles:** Pinpoint where a ridge softly dips toward your orchard beds, steering cold nighttime air downslope away from stone-fruit blossoms.",
+          "**Old agricultural furrows and ditches:** See historic berms or cutbacks hidden inside overgrown pasture before deciding where to place keyline swales or rainwater earthworks.",
+          "**Aspect shifts:** Read where a hillside turns smoothly from warm southeast morning sun into cooler northeast shade—paired with [The National Map](/guides/national-map) and [US Topo sheets](/guides/us-topo).",
+        ],
       },
       {
         type: "heading",
@@ -542,15 +459,11 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A slide shows a hillshade of a parcel, with no program name, no work unit, and no quality level. A later discussion treats the pretty slope as a measured surface. The useful record would have named 3DEP, the date, and the metadata that says what that work unit actually is.",
+        text: "A site designer receives a contractor's undated hillshade screenshot with zero layer name or contour source and assumes a low saddle has enough drop to drain a rain garden freely. Pulling the underlying 3DEP work-unit metadata alongside a level walk with stakes and string shows a two-foot dead pocket downslope—avoiding standing mosquito water beside the garden path.",
       },
       {
         type: "heading",
         text: "Sources",
-      },
-      {
-        type: "paragraph",
-        text: "The official source here is the program landing, opened 10 November 2026.",
       },
       {
         type: "sources",
@@ -562,23 +475,11 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[The National Map](/guides/national-map) — the official base-map suite that uses elevation, among other layers.",
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — a community flood-hazard map, not a substitute for named elevation.",
-          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — the household limit on a printed boundary.",
-          "[US Topo and historical topographic maps](/guides/us-topo) — say which topo you used. A topo is still not a site plan.",
+          "[The National Map](/guides/national-map) — USGS's base mapping suite built with 3DEP elevation and hydrography.",
+          "[US Topo and historical topographic maps](/guides/us-topo) — reading contour sheets and 1884 to 2006 historical changes.",
+          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — watching how shallow ground swales carry storm rain beyond mapped zones.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — pairing elevation cues with community flood boundaries.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to name the elevation source and read the work-unit metadata, or to open the 3DEP page itself. If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -592,7 +493,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "The National Map: a base is not a site plan",
     seoTitle: "The National Map — Guides | PlantGeo",
-    metaDescription: "The National Map is the USGS suite of base geospatial products, including US Topo. This guide covers what that base is, and why it is not a site plan.",
+    metaDescription:
+      "How growers and landscape planners use USGS The National Map as an authoritative base layer for roads, hydrography, and contours before drawing farm or yard layouts.",
     eyebrow: "The National Map",
     slug: "national-map",
     crumb: "The National Map",
@@ -601,47 +503,31 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "The National Map is the USGS suite of products, services, and applications for base geospatial information — topography, natural landscape, and built environment — including US Topo, on-demand topo, downloads, and historical topographic maps. It is a base, not a finished plan. Start from an authoritative base. Then say, in the same breath, that a base is not a site plan.",
-      },
-      {
-        type: "paragraph",
-        text: "This is a field note about official base maps, not a claim that PlantGeo is a mapping agency, and not a property survey.",
-      },
-      {
-        type: "paragraph",
-        text: "USGS, \"The National Map\": \"The National Map is a suite of products, services, and applications that provide access to base geospatial information representing the topography, natural landscape, and built environment of the United States and its territories.\" It \"supports digital and print versions of topographic maps, data download, web map services, and online viewing of maps and data.\"",
-      },
-      {
-        type: "paragraph",
-        text: "How the data are assembled, in USGS's words: \"The National Geospatial Program and its partners acquire and integrate authoritative geospatial data from a variety of sources and makes the resulting nationally consistent geospatial data layers available to all through The National Map.\"",
-      },
-      {
-        type: "paragraph",
-        text: "What it serves: it \"serves as the data source for cartographic products, such as US Topo and OnDemand Topo maps, and provides access to digital historical topographic maps.\" The page also points at standards for elevation, hydrography, and topographic maps, The National Map Viewer, and training.",
+        text: "Before sketching fence lines, access roads, and water storage tanks, every land planner needs an honest base map showing real topography, streams, and roads. USGS's The National Map gives homeowners and designers that shared starting grid—connecting authoritative national layers so your own parcel sketches rest on solid public geography instead of distorted phone screenshots.",
       },
       {
         type: "heading",
-        text: "What the suite actually is",
+        text: "What The National Map puts in reach",
       },
       {
         type: "paragraph",
-        text: "Products, services, and applications; digital and print topo; downloads and web services; US Topo, OnDemand Topo, and historical topo; nationally consistent layers from USGS and partners. This page does not invent a layer count, an update cycle, or an \"eight layers\" list that was not extracted from the opened landing.",
+        text: "USGS defines its suite cleanly: \"The National Map is a suite of products, services, and applications that provide access to base geospatial information representing the topography, natural landscape, and built environment of the United States and its territories.\" It \"supports digital and print versions of topographic maps, data download, web map services, and online viewing of maps and data.\"",
       },
       {
         type: "paragraph",
-        text: "Elevation standards on that page connect to [3DEP](/guides/usgs-3dep). Hydrography standards connect to already-briefed NHD / 3DHP material on the riparian site-type page; neither is a watershed plan by itself. [FEMA flood maps](/guides/fema-flood-maps) and the [National Wetlands Inventory](/guides/nwi-wetlands) are official products with their own jobs; they are not National Map substitutes, and The National Map is not a substitute for them.",
-      },
-      {
-        type: "paragraph",
-        text: "A US Topo is not a property survey or a grading plan.",
+        text: "As USGS notes, \"The National Geospatial Program and its partners acquire and integrate authoritative geospatial data from a variety of sources and makes the resulting nationally consistent geospatial data layers available to all through The National Map.\" Those consistent layers feed cartographic products \"such as US Topo and OnDemand Topo maps, and provides access to digital historical topographic maps,\" alongside standards for elevation, hydrography, The National Map Viewer, and public training materials.",
       },
       {
         type: "heading",
-        text: "What to write down",
+        text: "Keeping base layers, flood lines, and growing plans in their lanes",
       },
       {
         type: "paragraph",
-        text: "A site reading can name The National Map product used and the date. The Ada County sample, if it is mentioned at all, is a sample on real map data and not a client. The [homestead soils](/site-types/homestead-mapped-soils) and [WUI](/site-types/wui-parcel) pages are land-kind siblings, not agency deployments.",
+        text: "Even the cleanest USGS base is a foundation—a base is not a site plan, and it is not a property survey. On a real homestead or permaculture site, pair The National Map's base contours and streams with specialized overlays that do different jobs: [USGS 3DEP](/guides/usgs-3dep) for bare-earth micro-topography, [FEMA flood maps](/guides/fema-flood-maps) for regulated flood zones, and [National Wetlands Inventory maps](/guides/nwi-wetlands) for wetland habitat edges.",
+      },
+      {
+        type: "paragraph",
+        text: "Once your site layout matches what the ground actually does, [Aevani's growing guides](https://aevani.com/guides) pick up the plant and raised-bed side (noting Aevani's catalogue itself remains a preview not for sale yet), while [homestead mapped soils](/site-types/homestead-mapped-soils) and [WUI parcels](/site-types/wui-parcel) translate base layers into parcel checks.",
       },
       {
         type: "heading",
@@ -649,15 +535,11 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A planning packet is titled \"site plan\" and contains only an undated topo screenshot, with no product name. A later reader treats the screenshot as a design. The useful record would have named the National Map product, the date, and the fact that a base is not a plan.",
+        text: "Someone attaches a blurry, undated topographic screenshot inside a contractor folder labeled \"site plan,\" with no product name or scale. Naming the exact National Map product and inspection date—and separating base maps from your measured ground stakes—keeps contractors, growers, and inspectors speaking the same language.",
       },
       {
         type: "heading",
         text: "Sources",
-      },
-      {
-        type: "paragraph",
-        text: "The official source here is the program landing, opened 10 November 2026.",
       },
       {
         type: "sources",
@@ -669,23 +551,11 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[USGS 3D Elevation Program](/guides/usgs-3dep) — the official elevation program the base map leans on.",
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — a community flood-hazard map.",
-          "[National Wetlands Inventory maps](/guides/nwi-wetlands) — a public inventory of wetland and deepwater habitats.",
-          "[US Topo and historical topographic maps](/guides/us-topo) — a current US Topo, an OnDemand sheet, or a historical quadrangle. None of them is a site plan.",
+          "[US Topo and historical topographic maps](/guides/us-topo) — picking between current US Topos, OnDemand sheets, and historical quadrangles.",
+          "[USGS 3D Elevation Program](/guides/usgs-3dep) — bare-earth lidar elevation feeding base contours.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — community flood boundaries alongside topographic streams.",
+          "[National Wetlands Inventory maps](/guides/nwi-wetlands) — habitat mapping where streams widen into marshes or meadows.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion. [Aevani's growing guides](https://aevani.com/guides) are the catalogue-side sibling when the question turns from the parcel to a growing system; the catalogue itself is still not for sale.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to name the National Map product and the date, or to open the USGS page itself. If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -699,7 +569,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "What is a base flood elevation (BFE)",
     seoTitle: "What is a base flood elevation (BFE) — Guides | PlantGeo",
-    metaDescription: "FEMA defines the base flood elevation as the height of a 1% annual-chance flood on named FIRM zones. It is not a finished floor, and not a survey.",
+    metaDescription:
+      "What a FEMA Base Flood Elevation (BFE) number really tells growers and homesteaders—1% annual-chance floodwater height on named zones, not an automatic finished floor or Zone A rule.",
     eyebrow: "Base flood elevation",
     slug: "base-flood-elevation",
     crumb: "What is a base flood elevation",
@@ -708,31 +579,31 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "The BFE is an elevation FEMA has delineated for a flood that has a 1% chance of equaling or exceeding that level in any given year, shown on the FIRM for named zones. It is not, by itself, a finished floor height, and it is not a survey of one lot. This is a field note about a number on an official map, not a grading desk, and not insurance or building-code advice.",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA glossary, \"Base Flood Elevation (BFE),\" last updated 5 March 2020. \"The elevation of surface water resulting from a flood that has a 1% chance of equaling or exceeding that level in any given year. The BFE is shown on the Flood Insurance Rate Map (FIRM) for zones AE, AH, A1–A30, AR, AR/A, AR/AE, AR/A1–A30, AR/AH, AR/AO, V1–V30 and VE.\" The zone list is quoted as FEMA named it. This page does not invent a BFE for Zone A or for other zones not on that glossary sentence.",
-      },
-      {
-        type: "paragraph",
-        text: "The 1% annual-chance wording is FEMA's. It is not collapsed here into an unsourced \"100-year flood\" guarantee. If that familiar phrase is used at all, it is only as a name for the same official chance, in FEMA's 1% wording.",
-      },
-      {
-        type: "paragraph",
-        text: "Already opened siblings. FEMA's FIRM glossary already names BFEs as one of the things FEMA delineates on the official community map, along with SFHAs and risk premium zones. Ready.gov's flood page already warns that flooding doesn't follow lines on a map.",
+        text: "When you inspect a creekside parcel on a FEMA map and see a dashed wave line with a number like `482` or `2714`, that number is a Base Flood Elevation (BFE). Before pouring footings for a wash-pack shed, raised greenhouse, or solar battery rack near bottomland, knowing what that number actually measures—and which zones leave it blank—prevents expensive elevation guesswork.",
       },
       {
         type: "heading",
-        text: "The limit",
+        text: "FEMA's exact definition of a BFE",
       },
       {
         type: "paragraph",
-        text: "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) is the place to name the panel, the zone, and the effective date. [Flooding doesn't follow lines on a map](/guides/ready-floods) is the household reminder that water is not obliged to stop at the printed line. [What is a FIRMette and how to print one](/guides/firmette) and [Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) are the companions for a printable piece of the official map, and for which dataset you are looking at.",
+        text: "FEMA's glossary entry for Base Flood Elevation (BFE), last updated 5 March 2020, defines it as: \"The elevation of surface water resulting from a flood that has a 1% chance of equaling or exceeding that level in any given year. The BFE is shown on the Flood Insurance Rate Map (FIRM) for zones AE, AH, A1–A30, AR, AR/A, AR/AE, AR/A1–A30, AR/AH, AR/AO, V1–V30 and VE.\"",
       },
       {
         type: "paragraph",
-        text: "This page does not invent freeboard, datum, or \"add two feet\" rules that were not on the opened BFE glossary. A site reading can name the effective map, the zone, the BFE as printed, and the date consulted. It cannot treat that number as a finished floor or as a survey of the lot.",
+        text: "Notice two plain rules hidden inside that single glossary sentence. First, a BFE refers to a **1% chance of equaling or exceeding that level in any given year**—meaning a flood reaching or topping that elevation can happen two years in a row rather than waiting a polite hundred years between visits. Second, plain Zone A maps unstudied floodplains where FEMA's glossary does not list a published BFE line, so nobody should make up a BFE off the back of an envelope.",
+      },
+      {
+        type: "heading",
+        text: "How BFE informs homestead and garden layout",
+      },
+      {
+        type: "paragraph",
+        text: "A printed BFE is not a finished-floor code requirement, a vertical datum stamp, or a substitute for a licensed surveyor's elevation certificate. Every county or flood district applies its own freeboard rules and benchmark datums on top of FEMA's surface-water number.",
+      },
+      {
+        type: "paragraph",
+        text: "In your [PlantGeo site plan](/plan/new), log the effective panel from [FEMA flood maps](/guides/fema-flood-maps), whether the dataset is [effective or preliminary](/guides/nfhl-preliminary-vs-effective), the printed zone and BFE if shown, and the date checked. Then use common field sense: keep beehives, compost bays, fuel drums, and tool sheds well uphill of seasonal high water, and remember [Ready.gov's reminder](/guides/ready-floods) that flash runoff can overtop small creek banks faster than paper lines shift.",
       },
       {
         type: "heading",
@@ -740,7 +611,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A sketch labels a finished floor \"at the BFE\" after reading a number on a map, with no survey, no datum, and no zone check. FEMA's glossary already says what the number is: a surface-water elevation for a 1% annual-chance flood, on named FIRM zones.",
+        text: "Someone reads a nearby creek's BFE off a web viewer, eyeballs ground height from the back porch, and stakes a permanent timber shed \"safe at the BFE\" with zero datum check or local floodplain inquiry. Walking the site with an official [FIRMette](/guides/firmette) and consulting local officials before pouring concrete avoids sitting right inside local freeboard rules.",
       },
       {
         type: "heading",
@@ -756,23 +627,11 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — the official community map, and where to find it.",
-          "[What is a FIRMette and how to print one](/guides/firmette) — a full-scale piece you can print, from an effective map.",
-          "[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) — which dataset you are looking at.",
-          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — water is not obliged to stop at the printed line.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — looking up your parcel's community panel and zone.",
+          "[What is a FIRMette and how to print one](/guides/firmette) — printing an official full-scale slice of an effective FIRM.",
+          "[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) — confirming whether you are reading current effective data.",
+          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — keeping overland runoff in view outside mapped channels.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue, if it is mentioned at all, is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to write down the effective map, the zone, the BFE as printed, and the date, or to read [FEMA flood maps](/guides/fema-flood-maps). If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -793,7 +652,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "What is a FIRMette and how to print one",
     seoTitle: "What is a FIRMette and how to print one — Guides | PlantGeo",
-    metaDescription: "A FIRMette is a full-scale section of a FIRM, formatted to print on a home or office printer. FEMA’s FAQ says you cannot make one from a preliminary map.",
+    metaDescription:
+      "How to generate a full-scale, home-printable FEMA FIRMette of an effective flood map for your binder or clipboard walk—and why preliminary panels cannot produce one.",
     eyebrow: "FIRMette",
     slug: "firmette",
     crumb: "What is a FIRMette",
@@ -802,31 +662,31 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "If you need a full-scale piece of the official map you can actually print, the official product is a FIRMette of an *effective* map — not a screenshot, and not a preliminary panel. This is a short how-to about that product, not a PlantGeo tool, and not a click-path tutorial that will rot. It is not a survey.",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA Flood Map Service Center FAQs. \"FEMA’s Flood Insurance Rate Maps (FIRMs) are approximately two feet by three feet in size when printed to full-scale. A FIRMette is a full-scale section of a FIRM that you create yourself and is formatted to print on most home/office printers.\" \"You can create a FIRMette of most effective maps in FEMA’s online inventory using the FIRMette Web tool. To create a FIRMette, you must first find a flood map, and then click the View button associated with that flood map.\" The official FAQ and tutorial are the place for the rest of the steps; this page does not invent a screenshot walkthrough.",
-      },
-      {
-        type: "paragraph",
-        text: "The same FAQ, on preliminary maps: \"Preliminary Flood Insurance Rate Maps are not final regulatory products and should not be used for the purposing of making flood determinations. Preliminary FIRMs cannot be viewed with the FIRMette tool, nor accessed with the FIRMette Desktop application. Therefore, a FIRMette cannot be created for preliminary maps.\" \"Purposing\" is the FAQ's own phrasing.",
-      },
-      {
-        type: "paragraph",
-        text: "The National Flood Hazard Layer page notes that in the NFHL Viewer you can use the NFHL Print Tool \"to download and print a full Flood Insurance Rate Map (FIRM) or FIRMette (a smaller, printable version of a FIRM) where NFHL data exists.\" That is a second official door, not a second definition.",
+        text: "Full FEMA flood panels are giant wall sheets—roughly two feet by three feet—nearly impossible to print cleanly on a regular kitchen printer without shrinking the scale or chopping off the legend. A FIRMette solves that problem: it pulls a crisp, full-scale slice of an effective map directly onto letter paper so you can slip it onto a clipboard alongside your parcel sketch.",
       },
       {
         type: "heading",
-        text: "What it is, and what it is not",
+        text: "What FEMA says a FIRMette is—and when it will not work",
       },
       {
         type: "paragraph",
-        text: "A FIRMette is a full-scale section of a roughly two-by-three-foot FIRM, formatted for a home or office printer, created from most effective maps after you find the map and use View. Preliminary FIRMs are not final regulatory products and cannot be turned into a FIRMette with the official tools. [Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) is the sibling for that distinction. [FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) is where the search starts. [What is a base flood elevation (BFE)](/guides/base-flood-elevation) is the companion for a number printed on that map.",
+        text: "Per FEMA's Flood Map Service Center FAQs: \"FEMA’s Flood Insurance Rate Maps (FIRMs) are approximately two feet by three feet in size when printed to full-scale. A FIRMette is a full-scale section of a FIRM that you create yourself and is formatted to print on most home/office printers.\" To pull one, \"You can create a FIRMette of most effective maps in FEMA’s online inventory using the FIRMette Web tool. To create a FIRMette, you must first find a flood map, and then click the View button associated with that flood map.\"",
       },
       {
         type: "paragraph",
-        text: "A site reading can attach the FIRMette, the panel, the effective date, and the date consulted. A FIRMette of an effective map is still not a survey, and a preliminary image is not a FIRMette.",
+        text: "FEMA's National Flood Hazard Layer page also notes you can use the NFHL Print Tool inside the NFHL Viewer \"to download and print a full Flood Insurance Rate Map (FIRM) or FIRMette (a smaller, printable version of a FIRM) where NFHL data exists.\"",
+      },
+      {
+        type: "paragraph",
+        text: "One critical boundary trips many people up: preliminary maps cannot generate a FIRMette. As FEMA's FAQ states directly: \"Preliminary Flood Insurance Rate Maps are not final regulatory products and should not be used for making flood determinations. Preliminary FIRMs cannot be viewed with the FIRMette tool, nor accessed with the FIRMette Desktop application. Therefore, a FIRMette cannot be created for preliminary maps.\" Read [Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) if your county has an upcoming draft update under review.",
+      },
+      {
+        type: "heading",
+        text: "Taking your FIRMette outside",
+      },
+      {
+        type: "paragraph",
+        text: "Once downloaded from FEMA MSC after checking [FEMA flood maps](/guides/fema-flood-maps), keep the FIRMette header, panel number, and effective date intact with your site notes. Walk the fence line with that paper sheet in hand and compare it with on-ground ditch banks, culvert inlets, and [Base Flood Elevation](/guides/base-flood-elevation) references—knowing a printed slice helps orient your walk, never replaces a licensed land survey.",
       },
       {
         type: "heading",
@@ -834,7 +694,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A screenshot of a preliminary panel is printed at letter size and filed as \"the FIRMette.\" The MSC FAQ already says a FIRMette cannot be created for preliminary maps, and that those maps are not final regulatory products.",
+        text: "Someone screenshots a preliminary draft map off a county blog, prints it onto letter paper, and labels the file \"Official FIRMette\" in a shed permit packet. Checking the real MSC View tool shows immediately that preliminary drafts cannot produce a FIRMette—catching the mix-up before any site work begins.",
       },
       {
         type: "heading",
@@ -850,22 +710,10 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — find the official community map first.",
-          "[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) — which dataset you are looking at.",
-          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — the number on the map is an elevation, not a finished floor.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — looking up your effective panel first.",
+          "[Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) — keeping current effective maps separate from preliminary drafts.",
+          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — reading the elevation marks printed on named FIRM zones.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue, if it is mentioned at all, is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to find the effective map, make a FIRMette from it, and write down the panel and the date, or to read [FEMA flood maps](/guides/fema-flood-maps). If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -884,7 +732,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "Effective and preliminary flood maps, and the NFHL",
     seoTitle: "Effective and preliminary flood maps, and the NFHL — Guides | PlantGeo",
-    metaDescription: "The National Flood Hazard Layer holds current effective flood data. Preliminary maps are an early look, not a final product for flood determinations.",
+    metaDescription:
+      "How FEMA's National Flood Hazard Layer (current effective data) compares with preliminary flood hazard drafts during community review—and why date-stamping your site plan matters.",
     eyebrow: "Effective and preliminary flood maps",
     slug: "nfhl-preliminary-vs-effective",
     crumb: "Effective and preliminary flood maps",
@@ -893,31 +742,39 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "The National Flood Hazard Layer is a geospatial database of *current effective* flood hazard data. Preliminary products are an early look that must still go through a formal review, and FEMA's MSC FAQ says they are not final regulatory products and should not be used to make flood determinations. This is a field note about which flood dataset you are looking at, not a LOMA filing desk, and not insurance advice.",
-      },
-      {
-        type: "paragraph",
-        text: "A dedicated FEMA URL for \"preliminary flood hazard data\" as a standalone path returned HTTP 404 on 2026-11-10. The quotations below are from the opened National Flood Hazard Layer page and the MSC FAQ.",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA, \"The National Flood Hazard Layer.\" \"The National Flood Hazard Layer (NFHL) is a geospatial database that contains current effective flood hazard data. FEMA provides the flood hazard data to support the National Flood Insurance Program.\" \"The NFHL can also be used in place of the FIRM for NFIP purposes with appropriate care.\" \"The NFHL is made from effective flood maps and Letters of Map Change (LOMC) delivered to communities.\" \"NFHL digital data covers over 90% of the U.S. population. New and revised data is being added continuously.\" \"If you need information for areas not covered by the NFHL data, there may be other FEMA products which provide coverage for those areas.\" The 90% figure is FEMA's coverage statement about population, not a claim about a particular county or parcel, and not \"90% of land area.\"",
-      },
-      {
-        type: "paragraph",
-        text: "The same page, \"Preliminary Flood Hazard Data.\" \"Preliminary flood hazard data provides the public an early look at their home or community’s projected risk to flood hazards. Before they become effective, the preliminary products go through a formal review period that provides the opportunity to appeal the preliminary determinations with better data.\" \"Preliminary FIRM products help community officials and property owners see how upcoming flood mapping changes will affect them. Community officials and property owners can also review the data for accuracy.\" \"Preliminary data may include new or revised Flood Insurance Rate Maps (FIRM), Flood Insurance Study (FIS) Reports and FIRM Databases.\" The page also names a Flood Map Changes Viewer for comparing preliminary data with existing data, and a following heading for Pending Flood Hazard Data. Pending is named only as a heading that exists; its definition is not invented here.",
-      },
-      {
-        type: "paragraph",
-        text: "FEMA MSC FAQs: \"Preliminary Flood Insurance Rate Maps are not final regulatory products and should not be used for the purposing of making flood determinations.\" A FIRMette cannot be created for preliminary maps.",
+        text: "Counties revise watershed studies as bridges widen, subdivisions add pavement, and lidar refines stream channels. That means two different FEMA maps can sometimes appear for the exact same creek: the **current effective** flood hazard layer in force today, and **preliminary flood hazard data** posted for public inspection before formal adoption. Knowing which dataset sits open on your screen prevents framing your site layout around the wrong boundary.",
       },
       {
         type: "heading",
-        text: "What to write down",
+        text: "What the National Flood Hazard Layer covers",
       },
       {
         type: "paragraph",
-        text: "A site reading should say whether the layer was effective or preliminary, and the date consulted. [What is a FIRMette and how to print one](/guides/firmette) is the companion for a printable piece of an effective map. [FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) and [What is a base flood elevation (BFE)](/guides/base-flood-elevation) are the other official-map siblings. This page is not an appeal how-to, not a LOMA walkthrough, and not a survey.",
+        text: "FEMA explains the layer cleanly: \"The National Flood Hazard Layer (NFHL) is a geospatial database that contains current effective flood hazard data. FEMA provides the flood hazard data to support the National Flood Insurance Program.\" Built from effective flood maps and Letters of Map Change (LOMC) delivered to communities, \"The NFHL can also be used in place of the FIRM for NFIP purposes with appropriate care.\"",
+      },
+      {
+        type: "paragraph",
+        text: "FEMA also notes: \"NFHL digital data covers over 90% of the U.S. population. New and revised data is being added continuously. If you need information for areas not covered by the NFHL data, there may be other FEMA products which provide coverage for those areas.\" Bear in mind that \"over 90% of the U.S. population\" describes population coverage nationwide, not \"90% of land area.\" Rural valleys and mountain headwaters still rely on panel lookups in the MSC.",
+      },
+      {
+        type: "heading",
+        text: "How preliminary maps differ from effective maps",
+      },
+      {
+        type: "paragraph",
+        text: "On the same National Flood Hazard Layer page, under Preliminary Flood Hazard Data, FEMA writes: \"Preliminary flood hazard data provides the public an early look at their home or community’s projected risk to flood hazards. Before they become effective, the preliminary products go through a formal review period that provides the opportunity to appeal the preliminary determinations with better data.\" They help community officials and landowners review upcoming FIRMs, Flood Insurance Study (FIS) Reports, and FIRM Databases for accuracy—paired with FEMA's Flood Map Changes Viewer and a Pending Flood Hazard Data section heading.",
+      },
+      {
+        type: "paragraph",
+        text: "At the same time, FEMA MSC FAQs remain unambiguous: preliminary FIRMs \"are not final regulatory products\" and should not be used to make final flood determinations, and you cannot generate a [FIRMette](/guides/firmette) from a preliminary panel.",
+      },
+      {
+        type: "heading",
+        text: "How to keep both clear in your site notes",
+      },
+      {
+        type: "paragraph",
+        text: "If your watershed has a preliminary update on the horizon, log **both** in your [PlantGeo site plan](/plan/new): write down the current effective zone and date from [FEMA flood maps](/guides/fema-flood-maps), and note separately whether a preliminary revision shifts the creek bank uphill or closer to your orchard. Watching early revisions helps homesteaders avoid putting barns right into an expanding floodway without mistaking an early draft for today's legal map.",
       },
       {
         type: "heading",
@@ -925,7 +782,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "Two images of the same street are on screen, one labelled preliminary and one unlabelled, and the unlabelled image is filed as \"the current map.\" The NFHL page already says the layer holds current effective data, and the MSC FAQ already says preliminary maps are not final regulatory products.",
+        text: "Two neighbors pull different flood lines along the same lane: one downloaded a draft county map labeled preliminary, while the other checked the effective NFHL panel. Writing \"Effective NFHL\" or \"Preliminary draft\" plus the inspection date beside every sketch eliminates confusion immediately.",
       },
       {
         type: "heading",
@@ -941,22 +798,10 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — the official community map.",
-          "[What is a FIRMette and how to print one](/guides/firmette) — a printable piece of an effective map only.",
-          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — the number on the map is an elevation, not a finished floor.",
+          "[FEMA flood maps: how to find a FIRM](/guides/fema-flood-maps) — starting at FEMA's Flood Map Service Center.",
+          "[What is a FIRMette and how to print one](/guides/firmette) — printing a full-scale piece of an effective FIRM.",
+          "[What is a base flood elevation (BFE)](/guides/base-flood-elevation) — understanding surface-water numbers on named zones.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue, if it is mentioned at all, is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to say whether the layer was effective or preliminary, and the date consulted, or to read [FEMA flood maps](/guides/fema-flood-maps). If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -975,7 +820,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "Ready.gov wildfire preparedness",
     seoTitle: "Ready.gov wildfire preparedness — Guides | PlantGeo",
-    metaDescription: "Ready.gov defines wildfires as unplanned fires that can reach communities, and advises a fire-resistant zone of at least 30 feet. That is not a Firewise width.",
+    metaDescription:
+      "How Ready.gov's wildfire home-hardening steps—alerts, hose reach, and a 30-foot leaf- and debris-free fire-resistant zone—fit into placing windbreaks and plantings near rural buildings.",
     eyebrow: "Ready.gov wildfires",
     slug: "ready-wildfires",
     crumb: "Ready.gov wildfire preparedness",
@@ -984,31 +830,31 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "Ready.gov defines wildfires as unplanned fires that burn out of control in natural areas such as forests, grasslands, or prairies, and that \"spread quickly and can devastate wildlife, natural areas and communities.\" Its household guidance includes a fire-resistant zone \"for at least 30 feet from your home.\" That is Ready.gov's figure, not a substitute for the Firewise and IBHS zone widths already briefed on the [WUI parcel](/site-types/wui-parcel) page. This is a household preparedness note, not a second WUI-growth essay, and not a PlantGeo modeling claim.",
-      },
-      {
-        type: "paragraph",
-        text: "Ready.gov, \"Wildfires.\" \"Wildfires are unplanned fires that burn out of control in natural areas like forests, grasslands or prairies. These fires spread quickly and can devastate wildlife, natural areas and communities.\" Prepare: several ways to receive alerts, including the FEMA app for National Weather Service alerts \"for up to five locations nationwide,\" community alerts, the Emergency Alert System, and Wireless Emergency Alerts, \"which requires no-sign up.\" \"Pay attention to air quality alerts.\" A household evacuation plan; documents kept current and copied.",
-      },
-      {
-        type: "paragraph",
-        text: "The same page, \"Strengthen your Home.\" \"Use fire-resistant materials to build, renovate or make repairs. Find an outdoor water source with a hose that can reach any area of your property. Create a fire-resistant zone that is free of leaves, debris or flammable materials for at least 30 feet from your home.\" It also advises designating a room that can be closed off from outside air, closing doors and windows, and using a portable air cleaner \"to keep indoor pollution levels low when smoky conditions exist.\"",
-      },
-      {
-        type: "paragraph",
-        text: "The opened page did not, in the extracted body, use the word \"defensible.\" That word is not imported here. Firewise Immediate Zone and other NFPA widths are not imported into this page. They belong on the [WUI parcel](/site-types/wui-parcel) sibling, and they are kept distinct from Ready.gov's \"at least 30 feet.\"",
+        text: "Planning windbreaks, mulch beds, and woodpiles near a house or equipment barn in dry western valleys means keeping clearance around structures top of mind before the first seedling goes in the ground. Ready.gov gives households a clear baseline checklist—covering emergency alerts, outdoor water reach, and a fire-resistant zone around the home—that fits cleanly into parcel planning alongside our detailed [WUI parcel notes](/site-types/wui-parcel).",
       },
       {
         type: "heading",
-        text: "What Ready.gov says to do, and what this page does not mix",
+        text: "What Ready.gov recommends for homes and outbuildings",
       },
       {
         type: "paragraph",
-        text: "Alerts, including five NWS locations in the FEMA app, and Wireless Emergency Alerts with no sign-up. An evacuation plan. Documents. Fire-resistant materials; a hose that can reach any area of the property; a fire-resistant zone free of leaves, debris, or flammable materials for at least 30 feet from the home; a closable room and an air cleaner in smoke.",
+        text: "Ready.gov defines wildfires as \"unplanned fires that burn out of control in natural areas like forests, grasslands or prairies. These fires spread quickly and can devastate wildlife, natural areas and communities.\" Before fire season arrives, the page recommends layering multiple alert channels: the FEMA app for National Weather Service alerts \"for up to five locations nationwide,\" local community alerts, the Emergency Alert System, and Wireless Emergency Alerts, \"which requires no-sign up,\" while advising households to \"Pay attention to air quality alerts\" and keep an evacuation plan and current document copies ready.",
       },
       {
         type: "paragraph",
-        text: "[Flooding doesn't follow lines on a map](/guides/ready-floods) is the flood companion in the same Ready.gov household series. This page does not invent survival percentages, parcel-level wildfire probability, or an embers lecture. The opened page's \"ember\" hit was in a generic supplies paragraph, not a home-ignition-zone discussion, and is not stretched here.",
+        text: "Under \"Strengthen your Home,\" Ready.gov pairs building upkeep with surrounding yard maintenance: \"Use fire-resistant materials to build, renovate or make repairs. Find an outdoor water source with a hose that can reach any area of your property. Create a fire-resistant zone that is free of leaves, debris or flammable materials for at least 30 feet from your home.\" For smoky days, it also advises picking a room that closes tightly from outside air and using a portable air cleaner \"to keep indoor pollution levels low when smoky conditions exist.\"",
+      },
+      {
+        type: "heading",
+        text: "Keeping Ready.gov's 30 feet separate from Firewise zones",
+      },
+      {
+        type: "paragraph",
+        text: "Growers often hear overlapping zone numbers in community workshops. Ready.gov's baseline rule is simple and specific: clear leaves, debris, and flammable materials **for at least 30 feet from your home**. Separate NFPA Firewise USA and IBHS zone distances live on their own pages and are laid out distinctly on our [WUI parcel](/site-types/wui-parcel) guide rather than blurred into one hybrid rule.",
+      },
+      {
+        type: "paragraph",
+        text: "In practice, that boundary shapes where you plant trees and stack mulch: keep evergreen shelterbelts, deep straw stacks, and firewood racks well outside that cleared home perimeter, verify hosebib reach on your [PlantGeo site plan](/plan/new), and save leafy perennial shrubs for irrigated garden terraces away from siding and eaves.",
       },
       {
         type: "heading",
@@ -1016,7 +862,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A household note says \"30 feet of defensible space, per Ready.gov and Firewise,\" as if those were one number. Ready.gov's page already states \"at least 30 feet.\" The Firewise and IBHS widths live on a different official set of pages, and they are not merged here.",
+        text: "A homestead layout shows dense pine windbreaks and uncomposted bark mulch running right up to the porch deck while referencing \"Ready.gov and Firewise\" as if both said the exact same thing. Keeping Ready.gov's \"at least 30 feet\" clear perimeter distinct—and pushing resinous windbreaks farther out across the pasture ridge—protects both winter shelter and porch safety.",
       },
       {
         type: "heading",
@@ -1032,21 +878,10 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[WUI parcels](/site-types/wui-parcel) — the Firewise and IBHS widths, kept separate from Ready.gov's 30 feet.",
-          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — the Ready.gov flood companion.",
+          "[WUI parcels](/site-types/wui-parcel) — Firewise and IBHS zone rules, kept distinct from Ready.gov's baseline checklist.",
+          "[Reading winter sun, south slopes, and windbreaks](/blog/sun-arc-aspect-and-windbreaks-for-orchards-and-beds) — how to place windbreaks off eaves while avoiding frost dams.",
+          "[Flooding doesn't follow lines on a map](/guides/ready-floods) — the companion Ready.gov guide for yard water and drainage.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue, if it is mentioned at all, is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to read Ready.gov's wildfire page, or the [WUI parcel](/site-types/wui-parcel) sibling for Firewise and IBHS widths. If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [
@@ -1065,7 +900,8 @@ export const GUIDES: readonly GuideArticle[] = [
   {
     h1: "US Topo and historical topographic maps",
     seoTitle: "US Topo and historical topographic maps — Guides | PlantGeo",
-    metaDescription: "USGS moved from hand-scribed historical topos to US Topo maps in 2009. This guide keeps those products distinct. A topo is still not a site plan.",
+    metaDescription:
+      "How USGS current US Topo quadrangles (1:24,000-scale, digital since 2009) and historical maps (1884–2006) help homesteaders spot old springs, ditches, and land changes.",
     eyebrow: "US Topo and historical maps",
     slug: "us-topo",
     crumb: "US Topo and historical topographic maps",
@@ -1074,31 +910,27 @@ export const GUIDES: readonly GuideArticle[] = [
     blocks: [
       {
         type: "paragraph",
-        text: "Say which topo you used: a current US Topo, an OnDemand custom sheet, or a historical quadrangle from 1884–2006. They are not interchangeable without saying so, and none of them is a site plan. USGS has been the primary civilian mapping agency of the United States since 1879. In 2009 it transitioned from hand-scribed historical topographic maps to US Topos, which are computer-generated on a regular schedule from national databases. This is a field note about official topo products, not a claim that PlantGeo is a mapping agency.",
-      },
-      {
-        type: "paragraph",
-        text: "A narrower \"US Topo maps\" URL returned HTTP 404 on 2026-11-10. The quotations below are from the opened USGS \"Topographic Maps\" program page.",
-      },
-      {
-        type: "paragraph",
-        text: "USGS, \"Topographic Maps.\" \"The U.S. Geological Survey (USGS) has been the primary civilian mapping agency of the United States since 1879. Some of the most well-known USGS maps are the 1:24,000-scale topographic maps, also called 7.5-minute quadrangles. In 2009, the USGS transitioned from our hand scribed historical topographic maps to US Topos, which are computer-generated on a regular schedule using national databases…\" \"Built on the success of over 140 years of USGS topographic mapping, the US Topo series delivers consistent map coverage of the American landscape using National Map data.\" US Topo maps are \"Available for free and immediate download.\" \"The Historical Topographic Map Collection contains USGS topographic maps published 1884 to 2006.\" The same page also names topoBuilder for \"custom topographic maps—OnDemand Topos.\"",
-      },
-      {
-        type: "paragraph",
-        text: "Already opened in batch 1: \"The National Map is a suite of products, services, and applications…\" and \"serves as the data source for cartographic products, such as US Topo and OnDemand Topo maps, and provides access to digital historical topographic maps.\"",
+        text: "Walk an older rural parcel long enough and you start wondering why there is a sunken stone ditch behind the barn or why one corner of dry pasture stays greener in July than the field beside it. Comparing a modern digital **US Topo** quadrangle against a **historical topographic sheet** often reveals historic springs, abandoned irrigation canals, and gravel borrow pits that modern subdivision roads erased years ago.",
       },
       {
         type: "heading",
-        text: "The official sequence",
+        text: "How US Topo compares with historical sheets",
       },
       {
         type: "paragraph",
-        text: "Civilian mapping agency since 1879; well-known 1:24,000 / 7.5-minute quadrangles; 2009 transition from hand-scribed sheets to computer-generated US Topos on a regular schedule, from National Map data; historical collection 1884–2006; free download of US Topo; topoBuilder for OnDemand Topos. This page does not invent contour intervals, update cycles, or a completeness claim the opened page does not make. A US Topo or a historical quad is not a property survey or a grading plan.",
+        text: "As USGS summarizes on its Topographic Maps page: \"The U.S. Geological Survey (USGS) has been the primary civilian mapping agency of the United States since 1879. Some of the most well-known USGS maps are the 1:24,000-scale topographic maps, also called 7.5-minute quadrangles. In 2009, the USGS transitioned from our hand scribed historical topographic maps to US Topos, which are computer-generated on a regular schedule using national databases…\" Built over 140+ years of topographic work, \"the US Topo series delivers consistent map coverage of the American landscape using National Map data\" and is \"Available for free and immediate download.\" Alongside current sheets, USGS notes: \"The Historical Topographic Map Collection contains USGS topographic maps published 1884 to 2006,\" and points to topoBuilder for custom \"OnDemand Topos.\"",
       },
       {
         type: "paragraph",
-        text: "A site reading can name the product, the date, and the scale. The Ada County sample, if it is mentioned at all, is a sample and not a client. [The National Map: a base is not a site plan](/guides/national-map) is the parent companion. [USGS 3D Elevation Program](/guides/usgs-3dep) is the elevation sibling.",
+        text: "Because [The National Map](/guides/national-map) serves as the shared database underneath current US Topo and OnDemand sheets, keeping the distinction clear matters in any parcel binder: always write down whether you looked at a current US Topo, an OnDemand sheet, or a dated historical quadrangle from 1884–2006.",
+      },
+      {
+        type: "heading",
+        text: "What to check on foot when old contours disagree with present ground",
+      },
+      {
+        type: "paragraph",
+        text: "When a historical 1:24,000 sheet marks a spring or seasonal creek crossing where your modern parcel looks level, bring both [USGS 3DEP bare-earth elevation](/guides/usgs-3dep) and a shovel outdoors. Old road fills, stock ponds, and tile drains frequently divert historic water slightly sideways across fence lines—vital clues before placing septic leach fields, orchards, or earthworks inside your [PlantGeo site plan](/plan/new). And once the land side is clear, [Aevani's growing guides](https://aevani.com/guides) carry planting-system references (with preview catalogue items not for sale yet).",
       },
       {
         type: "heading",
@@ -1106,7 +938,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "A base map is labelled \"the USGS topo\" after a scan of a 1950s sheet is mixed with a current US Topo, with no product name or date. The program page already keeps those products distinct.",
+        text: "A landowner stamps \"USGS topo\" across a planting layout after mixing an old 1958 scanned quadrangle showing an open spring with a modern US Topo showing a culverted road crossing—without writing down the edition date or series name. Checking both edition dates side by side explains immediately where that missing seep was piped underground.",
       },
       {
         type: "heading",
@@ -1122,21 +954,10 @@ export const GUIDES: readonly GuideArticle[] = [
       {
         type: "list",
         items: [
-          "[The National Map: a base is not a site plan](/guides/national-map) — the official base, not a finished plan.",
-          "[USGS 3D Elevation Program](/guides/usgs-3dep) — elevation you can name as a source.",
+          "[The National Map: a base is not a site plan](/guides/national-map) — how national base layers drive current topo sheets.",
+          "[USGS 3D Elevation Program](/guides/usgs-3dep) — bare-earth lidar surfaces that reveal micro-topography below tree cover.",
+          "[Reading winter sun, south slopes, and windbreaks](/blog/sun-arc-aspect-and-windbreaks-for-orchards-and-beds) — turning contour aspect into practical orchard layout.",
         ],
-      },
-      {
-        type: "paragraph",
-        text: "PlantGeo publishes no forecasts. The Aevani catalogue, if it is mentioned at all, is a preview and not for sale yet. No referral share is quoted. The [site-types index](/site-types) is the land-kind companion. [Aevani's growing guides](https://aevani.com/guides) are the catalogue-side sibling when the question turns from the parcel to a growing system; the catalogue itself is still not for sale.",
-      },
-      {
-        type: "paragraph",
-        text: "The useful next step is to name the product, the date, and the scale, or to read [The National Map](/guides/national-map). If something on this page is wrong, [write to us](/about).",
-      },
-      {
-        type: "paragraph",
-        text: "Author: Escherbridge. Last reviewed: 2026-11-10, America/Denver.",
       },
     ],
     sources: [

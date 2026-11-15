@@ -4,7 +4,10 @@ import { render, screen } from "@testing-library/react";
 import AboutPage, { metadata as aboutMetadata } from "@/app/about/page";
 import AffiliatePage, { metadata as affiliateMetadata } from "@/app/affiliate/page";
 import HomePage, { metadata as homeMetadata } from "@/app/page";
+import { generateMetadata as planMetadata } from "@/app/plan/[publicId]/page";
 import { CrawlableHome } from "@/components/home/CrawlableHome";
+import { SamplePlanBanner } from "@/components/plans/SamplePlanBanner";
+import { SAMPLE_PLAN_LABEL, SAMPLE_PLAN_PUBLIC_ID } from "@/lib/plans/sample";
 
 vi.mock("@/components/map/MapView", () => ({
   default: function MapViewStub() {
@@ -20,31 +23,64 @@ function followLink(name: string) {
 }
 
 describe("crawlable home", () => {
-  it("publishes the headline, the forecast refusal, and a follow link to Aevani", () => {
+  it("leads with field-walk planning copy, funnel CTAs, bottom legal notes, and Aevani follow link", () => {
     render(<CrawlableHome />);
     expect(
-      screen.getByRole("heading", { level: 1, name: "Plan the land on a map you can inspect." })
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Read sun, slope, and water before you stake a single bed.",
+      })
     ).toBeTruthy();
-    expect(screen.getByText(/PlantGeo publishes no forecasts/)).toBeTruthy();
-    expect(screen.getByText(/nothing from that catalogue is for sale yet/)).toBeTruthy();
-    followLink("Catalogue items from Aevani");
-    expect(screen.getByRole("link", { name: "Open the map" }).getAttribute("href")).toBe("/");
-    expect(screen.getByRole("link", { name: "Read the About page" }).getAttribute("href")).toBe(
-      "/about"
+    expect(
+      screen.getByRole("link", { name: "Open the Ada County Sample Plan" }).getAttribute("href")
+    ).toBe("/plan/sample-ada-county");
+    expect(
+      screen.getByRole("link", { name: "Start your own site plan" }).getAttribute("href")
+    ).toBe("/plan/new");
+    expect(screen.getByRole("link", { name: "field guides" }).getAttribute("href")).toBe("/guides");
+    expect(screen.getByRole("link", { name: "land-planning blog" }).getAttribute("href")).toBe(
+      "/blog"
     );
-    expect(screen.getByRole("link", { name: "Become an affiliate" }).getAttribute("href")).toBe(
+    expect(screen.getByRole("link", { name: "become an affiliate" }).getAttribute("href")).toBe(
       "/affiliate"
     );
+    followLink("Catalogue items from Aevani");
+    expect(screen.getByText(/PlantGeo publishes no forecasts/)).toBeTruthy();
+    expect(screen.getByText(/nothing from that preview catalogue is for sale yet/)).toBeTruthy();
+    expect(document.body.textContent ?? "").not.toMatch(/\d+%/);
   });
 
-  it("keeps that block in the home document and sets the document title", () => {
+  it("keeps that block in the home document and sets the document metadata", () => {
     render(<HomePage />);
     expect(document.getElementById("crawlable-home")?.textContent).toMatch(
-      /Plan the land on a map you can inspect/
+      /Read sun, slope, and water before you stake a single bed/
     );
-    expect(homeMetadata.title).toBe("PlantGeo — The whole map, unbundled");
-    expect(homeMetadata.description).toMatch(/Pacific Northwest extract/);
+    expect(homeMetadata.title).toBe(
+      "PlantGeo — Read sun, slope, drainage, and soils on your land"
+    );
+    expect(homeMetadata.description).toMatch(/Ada County sample parcel/);
     expect(homeMetadata.description).toMatch(/publishes no forecasts/);
+  });
+});
+
+describe("sample plan route", () => {
+  it("indexes the public sample parcel and normalizes legacy banner strings", async () => {
+    const sampleMeta = await planMetadata({
+      params: Promise.resolve({ publicId: SAMPLE_PLAN_PUBLIC_ID }),
+    });
+    expect(sampleMeta.title).toBe("Ada County Sample Plan — PlantGeo");
+    expect(sampleMeta.alternates?.canonical).toBe("/plan/sample-ada-county");
+    expect(sampleMeta.robots).toBeUndefined();
+
+    const privateMeta = await planMetadata({
+      params: Promise.resolve({ publicId: "plan_abc12345" }),
+    });
+    expect(privateMeta.robots).toEqual({ index: false, follow: false });
+
+    const { rerender } = render(<SamplePlanBanner label="Sample plan — not a real customer" />);
+    expect(screen.getByRole("status").textContent).toBe(SAMPLE_PLAN_LABEL);
+    rerender(<SamplePlanBanner label={SAMPLE_PLAN_LABEL} />);
+    expect(screen.getByRole("status").textContent).toBe(SAMPLE_PLAN_LABEL);
   });
 });
 
