@@ -6,7 +6,7 @@ import { editorialFocusRing, editorialFocusRingInverse } from "@/components/ui/e
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
-export function NewPlanForm() {
+export function NewPlanForm({ refCode }: { refCode?: string }) {
   const router = useRouter();
   const [title, setTitle] = useState("Site plan");
   const [notice, setNotice] = useState<string | null>(null);
@@ -19,7 +19,7 @@ export function NewPlanForm() {
         event.preventDefault();
         setNotice(null);
         void createPlan
-          .mutateAsync({ title })
+          .mutateAsync(refCode === undefined ? { title } : { title, refCode })
           .then((created) => {
             const params = new URLSearchParams();
             if (created.guestToken) params.set("token", created.guestToken);

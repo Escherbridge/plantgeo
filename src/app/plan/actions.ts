@@ -20,3 +20,15 @@ export async function rememberPlanRef(refCode: string): Promise<void> {
     maxAge: PLAN_REF_MAX_AGE_SECONDS,
   });
 }
+
+/** Drops a stored invite code. Used when the page's ref is unknown or inactive. */
+export async function forgetPlanRef(): Promise<void> {
+  const jar = await cookies();
+  jar.set(PLAN_REF_COOKIE, "", {
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 0,
+  });
+}
