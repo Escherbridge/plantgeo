@@ -36,6 +36,12 @@ and their three purpose-built chart components (`PriorityTable`, `RiskSummaryWid
 `TrendChart`) plus two more that had drifted to zero importers for the same reason
 (`ForecastBandChart`, `PieChart`) were deleted with them rather than kept as unreachable code.
 
+`/dashboard/affiliate` is the approved affiliate's invite link and plans-started
+count. It reads the active `affiliates` row for the signed-in email and shows
+no rate, payout, or date. `/dashboard/admin/affiliates` is the admin
+approve/decline list; approval issues the code. Neither route mounts
+`DashboardGrid`.
+
 The application body does not scroll. Dashboard uses `viewport-below-top-bar` with a fixed header
 and a `min-h-0 flex-1 overflow-y-auto` main, matching organization pages. Moderation likewise owns
 a viewport-bounded scroll surface so both review queues remain reachable on short/mobile screens.

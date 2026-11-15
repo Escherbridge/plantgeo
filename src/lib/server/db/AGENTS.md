@@ -75,4 +75,12 @@ application code that requires it.
 customer, and it is the only row allowed to set `is_sample`. Guest edit
 tokens are stored as SHA-256 hashes. Draft geometry stays on `site_plans` and
 must not be written into `geo.features`. An affiliate application is a review
-request: the page issues no code and states no commission or payout terms.
+request: the public page issues no code and states no commission or payout terms.
+
+`0007_affiliates` adds `affiliates`, one row per approved application. The
+issued `code` matches the plan ref pattern and is unique. A partial unique
+index allows one `active` row per email. `status` is `active` or `inactive`;
+`plans.create` and `/plan/new` keep a code only while it is active. The table
+has no rate, payout, or payout-date column. Sign-in with the same email sets
+`users.platform_role` to `affiliate` when the account is still a contributor.
+Admin, expert, and viewer are left unchanged. The role write is not a migration.

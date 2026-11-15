@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSession } from "next-auth/react";
 import { UserMenu } from "@/components/auth/UserMenu";
 
 const DASHBOARD_SECTIONS = [
@@ -26,8 +27,28 @@ const DASHBOARD_SECTIONS = [
   },
 ] as const;
 
+const AFFILIATE_SECTION = {
+  href: "/dashboard/affiliate",
+  title: "Your invite link",
+  description: "Send this link to a landowner, a grower, a school, or a homestead.",
+} as const;
+
+const AFFILIATE_REVIEW_SECTION = {
+  href: "/dashboard/admin/affiliates",
+  title: "Affiliate applications",
+  description: "Approve or decline applications. Approval issues a code.",
+} as const;
+
 /** Working account destinations; see AGENTS.md for deferred analytics widgets. */
 export default function DashboardPage() {
+  const { data: session } = useSession();
+  const role = session?.user?.platformRole;
+  const sections = [
+    ...DASHBOARD_SECTIONS,
+    ...(role === "affiliate" ? [AFFILIATE_SECTION] : []),
+    ...(role === "admin" ? [AFFILIATE_REVIEW_SECTION] : []),
+  ];
+
   return (
     <div className="viewport-below-top-bar bg-[hsl(var(--background))] flex flex-col">
       <header className="min-h-14 shrink-0 border-b border-[hsl(var(--border))] flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
@@ -44,7 +65,7 @@ export default function DashboardPage() {
           Explore a location, revisit an analysis or manage your organization.
         </p>
         <nav aria-label="Dashboard sections" className="mt-6 grid gap-4 sm:grid-cols-3">
-          {DASHBOARD_SECTIONS.map((section) => (
+          {sections.map((section) => (
             <Link
               key={section.href}
               href={section.href}

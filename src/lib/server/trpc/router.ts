@@ -18,6 +18,7 @@ import { layerWindowRouter } from "@/lib/server/trpc/routers/layer-window";
 import { usersRouter } from "@/lib/server/trpc/routers/users";
 import { plansRouter } from "@/lib/server/trpc/routers/plans";
 import { affiliateApplicationsRouter } from "@/lib/server/trpc/routers/affiliate-applications";
+import { affiliatesRouter } from "@/lib/server/trpc/routers/affiliates";
 
 export const appRouter = router({
   layers: layersRouter,
@@ -43,6 +44,7 @@ export const appRouter = router({
   users: usersRouter,
   plans: plansRouter,
   affiliateApplications: affiliateApplicationsRouter,
+  affiliates: affiliatesRouter,
 });
 
 export type AppRouter = typeof appRouter;
