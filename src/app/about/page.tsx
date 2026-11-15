@@ -1,4 +1,5 @@
-import type { Metadata } from "next";
+import { PublicJsonLd } from "@/components/content/PublicJsonLd";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import {
   EditorialActionLink,
   EditorialCaption,
@@ -19,11 +20,15 @@ import {
 } from "@/components/ui/editorial";
 import { WATER_GAUGES_STREAM_FACT } from "@/lib/water-gauges-stream";
 
-export const metadata: Metadata = {
-  title: "About PlantGeo — The whole map, unbundled",
-  description:
-    "PlantGeo is a 3D geospatial platform assembled entirely from open-source parts: MapLibre, deck.gl, Martin, PMTiles, Valhalla, Photon and PostGIS.",
-};
+const TITLE = "About PlantGeo — The whole map, unbundled";
+const DESCRIPTION =
+  "PlantGeo is a 3D geospatial platform assembled entirely from open-source parts: MapLibre, deck.gl, Martin, PMTiles, Valhalla, Photon and PostGIS.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/about",
+});
 
 const mastheadIndex = [
   { term: "Rendering", description: "MapLibre GL JS v5, deck.gl v9, Three.js" },
@@ -340,6 +345,7 @@ const principles = [
 export default function AboutPage() {
   return (
     <EditorialPage>
+      <PublicJsonLd name={TITLE} description={DESCRIPTION} path="/about" />
       <EditorialContainer>
         <header className="pt-section pb-roomy">
           <EditorialGrid>

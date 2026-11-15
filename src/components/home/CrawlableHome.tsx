@@ -1,3 +1,4 @@
+import { HomeWebGLNotice } from "@/components/home/HomeWebGLNotice";
 import {
   EditorialActionLink,
   EditorialLink,
@@ -10,6 +11,7 @@ import {
 export function CrawlableHome() {
   return (
     <section id="crawlable-home" className="home-crawlable">
+      <HomeWebGLNotice />
       <div className="mx-auto flex w-full max-w-page flex-col px-page-inset py-section">
         <p className="font-editorial-label text-label text-ink-muted uppercase">
           PlantGeo · Site-Planning Map

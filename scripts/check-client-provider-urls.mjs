@@ -30,6 +30,10 @@ const ALLOWED_ORIGINS = new Map([
 ]);
 
 const ALLOWED_PATH_PREFIXES = new Map([
+  [
+    "https://support.google.com/chrome/answer/6258784",
+    "browser help for turning hardware acceleration on; not an observation source",
+  ],
   ["http://www.w3.org/2000/svg", "SVG namespace identifier"],
   ["https://www.w3.org/2000/svg", "SVG namespace identifier"],
   ["https://tiles.aevani.com/", "first-party PMTiles archive on Cloudflare R2, see infra/tiles/AGENTS.md"],

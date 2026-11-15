@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
+import { MapErrorBoundary } from "@/components/map/MapErrorBoundary";
 import { CatalogPicker } from "@/components/plans/CatalogPicker";
 import { SamplePlanBanner } from "@/components/plans/SamplePlanBanner";
 import { editorialFocusRing, editorialFocusRingInverse } from "@/components/ui/editorial";
@@ -149,11 +150,13 @@ export function PlanWorkspace({
       {plan.isSample ? <SamplePlanBanner label={plan.sampleLabel} /> : null}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <div className="relative min-h-0 flex-1">
-          <MapView
-            initialLongitude={plan.camera?.longitude}
-            initialLatitude={plan.camera?.latitude}
-            initialZoom={plan.camera?.zoom}
-          />
+          <MapErrorBoundary>
+            <MapView
+              initialLongitude={plan.camera?.longitude}
+              initialLatitude={plan.camera?.latitude}
+              initialZoom={plan.camera?.zoom}
+            />
+          </MapErrorBoundary>
         </div>
         <aside className="h-[46%] shrink-0 overflow-y-auto rule-top-medium border-t-rule bg-paper px-comfortable py-comfortable md:h-auto md:w-[24rem] md:border-t-0 md:rule-left-medium md:border-l-rule">
           <p className="font-editorial-label text-label text-ink-muted uppercase">Site plan</p>

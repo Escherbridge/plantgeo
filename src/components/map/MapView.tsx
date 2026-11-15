@@ -38,6 +38,14 @@ import {
   LandContextAccessibleFeatureList,
 } from "@/components/map/land-context";
 import { LandContextPanelHost } from "@/components/panels/land-context";
+import { MapWebGLFallback } from "@/components/map/MapWebGLFallback";
+import {
+  browserWebGLState,
+  isWebGLFailure,
+  markWebGLAvailable,
+  markWebGLUnavailable,
+  webGLIsAvailable,
+} from "@/components/map/webgl-status";
 
 const RegionalIntelligencePanel = dynamic(
   () => import("@/components/panels/RegionalIntelligencePanel"),
@@ -153,10 +161,16 @@ export default function MapView({
   initialLongitude,
   initialLatitude,
   initialZoom,
+  onReady,
+  onUnavailable,
 }: {
   initialLongitude?: number;
   initialLatitude?: number;
   initialZoom?: number;
+  /** Fired once the MapLibre instance exists. Home uses this to retire the crawlable overlay. */
+  onReady?: () => void;
+  /** Fired when the canvas cannot be created, so the route can keep the rest of the page. */
+  onUnavailable?: () => void;
 } = {}) {
   const mapContainer = useRef<HTMLDivElement>(null);
   const hasPlanCamera =
@@ -192,6 +206,15 @@ export default function MapView({
   const [mapInstance, setMapInstance] = useState<maplibregl.Map | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [webglError, setWebglError] = useState(false);
+  const [webglUnavailable, setWebglUnavailable] = useState(false);
+  const onReadyRef = useRef(onReady);
+  const onUnavailableRef = useRef(onUnavailable);
+  const webglFailedRef = useRef(false);
+
+  useEffect(() => {
+    onReadyRef.current = onReady;
+    onUnavailableRef.current = onUnavailable;
+  });
   const [agentCoords, setAgentCoords] = useState<[number, number] | null>(null);
   // ONE workspace, in one of two modes -- the two independent `agentCoords`/`interventionCoords`
   // overlay slices this replaced could never both be open, and closing one never returned to the
@@ -276,6 +299,13 @@ export default function MapView({
     mapRef.current = m;
 
     m.on("error", (e) => {
+      if (isWebGLFailure(e.error)) {
+        webglFailedRef.current = true;
+        markWebGLUnavailable();
+        onUnavailableRef.current?.();
+        setWebglUnavailable(true);
+        return;
+      }
       // Protomaps prunes old daily builds; an expired archive 404s without CORS
       // headers, which MapLibre reports only as "Failed to fetch" (see the note
       // above DEFAULT_PMTILES_ARCHIVE_URL in src/lib/map/sources.ts). Name the
@@ -359,7 +389,55 @@ export default function MapView({
   }, []);
 
   useEffect(() => {
-    initMap();
+    if (webglUnavailable || webglError) return;
+
+    let cancelled = false;
+    const reportUnavailable = () => {
+      webglFailedRef.current = true;
+      markWebGLUnavailable();
+      onUnavailableRef.current?.();
+      queueMicrotask(() => {
+        if (!cancelled) setWebglUnavailable(true);
+      });
+    };
+
+    const supported = (maplibregl as { supported?: (options?: { failIfMajorPerformanceCaveat?: boolean }) => boolean }).supported;
+    const libraryBlocksWebGL = typeof supported === "function" && !webGLIsAvailable(supported);
+    const canvasBlocksWebGL = typeof supported !== "function" && browserWebGLState() === "unavailable";
+    if (libraryBlocksWebGL || canvasBlocksWebGL) {
+      reportUnavailable();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    try {
+      initMap();
+    } catch (error) {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        setMapInstance(null);
+      }
+      if (isWebGLFailure(error)) {
+        reportUnavailable();
+        return () => {
+          cancelled = true;
+        };
+      }
+      throw error;
+    }
+
+    if (!mapRef.current || webglFailedRef.current) {
+      if (mapRef.current) {
+        mapRef.current.remove();
+        mapRef.current = null;
+        setMapInstance(null);
+      }
+      return;
+    }
+    markWebGLAvailable();
+    onReadyRef.current?.();
 
     // Track WebGL context loss — but only while this map instance is active.
     // React 19 dev mode double-invokes effects, so cleanup destroys the map
@@ -372,7 +450,11 @@ export default function MapView({
       e.preventDefault();
       if (disposed) return; // map was intentionally removed
       contextLostTimer = setTimeout(() => {
-        if (!disposed) setWebglError(true);
+        if (!disposed) {
+          markWebGLUnavailable();
+          onUnavailableRef.current?.();
+          setWebglError(true);
+        }
       }, 3000);
     };
     const onContextRestored = () => {
@@ -384,6 +466,7 @@ export default function MapView({
     canvas?.addEventListener("webglcontextrestored", onContextRestored);
 
     return () => {
+      cancelled = true;
       disposed = true;
       if (contextLostTimer) clearTimeout(contextLostTimer);
       canvas?.removeEventListener("webglcontextlost", onContextLost);
@@ -395,7 +478,7 @@ export default function MapView({
         maplibregl.removeProtocol("pmtiles");
       }
     };
-  }, [initMap]);
+  }, [initMap, webglError, webglUnavailable]);
 
   // Re-assert render mode after a basemap swap. See src/components/map/AGENTS.md
   // "Style swaps and render-mode state" -- the handler MUST be registered before
@@ -464,25 +547,8 @@ export default function MapView({
     applyPitch();
   }, [is3DEnabled]);
 
-  if (webglError) {
-    return (
-      <div className="flex h-full w-full items-center justify-center bg-[hsl(var(--destructive)/0.1)]">
-        <div className="text-center">
-          <p className="text-lg font-medium text-[hsl(var(--destructive))]">
-            WebGL context lost
-          </p>
-          <p className="mt-1 text-sm text-[hsl(var(--muted-foreground))]">
-            Try refreshing the page
-          </p>
-          <button
-            onClick={() => window.location.reload()}
-            className="mt-3 px-4 py-2 rounded-lg bg-[hsl(var(--destructive))] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            Reload Page
-          </button>
-        </div>
-      </div>
-    );
+  if (webglUnavailable || webglError) {
+    return <MapWebGLFallback />;
   }
 
   return (

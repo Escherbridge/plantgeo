@@ -1,9 +1,15 @@
+import { PublicJsonLd } from "@/components/content/PublicJsonLd";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import ApiTester from "./ApiTester";
 
-export const metadata = {
-  title: "API Documentation — PlantGeo",
-  description: "PlantGeo public REST API documentation with interactive explorer",
-};
+const TITLE = "API Documentation — PlantGeo";
+const DESCRIPTION = "PlantGeo public REST API documentation with interactive explorer";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/docs",
+});
 
 function CodeBlock({ code }: { code: string }) {
   return (
@@ -143,6 +149,7 @@ function EndpointCard({
 export default function DocsPage() {
   return (
     <div className="min-h-screen bg-[hsl(var(--background))]">
+      <PublicJsonLd name={TITLE} description={DESCRIPTION} path="/docs" />
       {/* Header */}
       <header className="sticky top-0 z-10 border-b border-[hsl(var(--border))] bg-[hsl(var(--background)/0.95)] backdrop-blur-sm">
         <div className="mx-auto max-w-5xl px-6 py-4 flex items-center justify-between">
@@ -200,8 +207,11 @@ export default function DocsPage() {
         {/* Authentication */}
         <Section id="authentication" title="Authentication">
           <p className="text-sm text-[hsl(var(--muted-foreground))]">
-            All API requests require an API key. Generate one from your account settings under
-            API Keys. Pass it in the{" "}
+            The REST API needs an API key, and keys are issued by hand for now. Ask through{" "}
+            <a href="/contact" className="underline">
+              /contact
+            </a>
+            . Pass it in the{" "}
             <code className="font-mono text-sm text-[hsl(var(--foreground))]">
               x-api-key
             </code>{" "}

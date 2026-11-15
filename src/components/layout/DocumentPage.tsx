@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { PublicJsonLd } from "@/components/content/PublicJsonLd";
 import {
   EditorialContainer,
   EditorialDisplay,
@@ -13,15 +14,18 @@ export function DocumentPage({
   eyebrow,
   title,
   lead,
+  jsonLd,
   children,
 }: {
   eyebrow: string;
   title: string;
   lead: ReactNode;
+  jsonLd?: { name: string; description: string; path: string };
   children: ReactNode;
 }) {
   return (
     <EditorialPage>
+      {jsonLd ? <PublicJsonLd {...jsonLd} /> : null}
       <EditorialContainer>
         <header className="pt-section pb-roomy">
           <EditorialGrid>

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { ConsoleShell } from "@/components/onboarding/ConsoleShell";
+import { PRIVATE_ROUTE_ROBOTS } from "@/lib/public-site";
 
 export const metadata: Metadata = {
   title: "PlantGeo - Set Up Your Organization",
   description: "Create or join an organization to start collaborating on PlantGeo.",
+  robots: PRIVATE_ROUTE_ROBOTS,
 };
 
 /** Shared shell for onboarding: same "geospatial access" identity as the auth flow, wider canvas. */

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/editorial";
 import { GUIDE_AUTHOR, GUIDE_INDEX, GUIDES, guidePath } from "@/lib/content/guides";
 import { RSS_ALTERNATE } from "@/lib/content/rss";
+import { OG_IMAGE } from "@/lib/public-metadata";
 import { collectionStructuredData } from "@/lib/content/structured-data";
 
 export const metadata: Metadata = {
@@ -23,11 +24,13 @@ export const metadata: Metadata = {
     url: "/guides",
     title: GUIDE_INDEX.seoTitle,
     description: GUIDE_INDEX.metaDescription,
+    images: [OG_IMAGE],
   },
   twitter: {
     card: "summary_large_image",
     title: GUIDE_INDEX.seoTitle,
     description: GUIDE_INDEX.metaDescription,
+    images: [OG_IMAGE.url],
   },
 };
 

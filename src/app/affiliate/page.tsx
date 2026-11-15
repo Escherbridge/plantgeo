@@ -1,18 +1,22 @@
-import type { Metadata } from "next";
 import { AffiliateApplicationForm } from "@/app/affiliate/AffiliateApplicationForm";
 import { DocumentPage } from "@/components/layout/DocumentPage";
 import { EditorialLink, EditorialProse, EditorialSection } from "@/components/ui/editorial";
+import { publicPageMetadata } from "@/lib/public-metadata";
 
-export const metadata: Metadata = {
-  title: "Invite people to plan a site - PlantGeo",
-  description:
-    "Affiliates invite a landowner, a grower, a school, or a homestead to plan on the live map. Aevani catalogue items can be added to a plan later. Those items are not for sale yet. Applications are reviewed by hand.",
-  alternates: { canonical: "/affiliate" },
-};
+const TITLE = "Invite people to plan a site - PlantGeo";
+const DESCRIPTION =
+  "Affiliates invite a landowner, a grower, a school, or a homestead to plan on the live map. Aevani catalogue items can be added to a plan later. Those items are not for sale yet. Applications are reviewed by hand.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/affiliate",
+});
 
 export default function AffiliatePage() {
   return (
     <DocumentPage
+      jsonLd={{ name: TITLE, description: DESCRIPTION, path: "/affiliate" }}
       eyebrow="Affiliates"
       title="Invite people to plan a site."
       lead={

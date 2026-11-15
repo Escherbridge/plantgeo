@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
 import { ConsoleShell } from "@/components/onboarding/ConsoleShell";
+import { PRIVATE_ROUTE_ROBOTS } from "@/lib/public-site";
 
 export const metadata: Metadata = {
   title: "PlantGeo - Join an Organization",
   description: "Redeem a join code to join an organization on PlantGeo.",
+  robots: PRIVATE_ROUTE_ROBOTS,
 };
 
 /** Public shell for join-code landing pages; must render for logged-out visitors. */

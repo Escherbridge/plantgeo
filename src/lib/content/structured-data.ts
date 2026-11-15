@@ -125,6 +125,35 @@ export function guideStructuredData(page: GuideArticle) {
   });
 }
 
+/** WebPage plus Home → page, in the first HTML response. Home is a single crumb. */
+export function publicPageGraph(input: { name: string; description: string; path: string }) {
+  const pageUrl = absoluteSiteUrl(input.path);
+  const crumbs =
+    input.path === "/"
+      ? [{ "@type": "ListItem" as const, position: 1, name: "Home", item: pageUrl }]
+      : [
+          { "@type": "ListItem" as const, position: 1, name: "Home", item: absoluteSiteUrl("/") },
+          { "@type": "ListItem" as const, position: 2, name: input.name, item: pageUrl },
+        ];
+  return {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "WebPage",
+        name: input.name,
+        description: input.description,
+        url: pageUrl,
+        inLanguage: "en-US",
+        isPartOf: { "@id": `${SITE_ORIGIN}/#website` },
+      },
+      {
+        "@type": "BreadcrumbList",
+        itemListElement: crumbs,
+      },
+    ],
+  };
+}
+
 export function collectionStructuredData(input: {
   name: string;
   description: string;

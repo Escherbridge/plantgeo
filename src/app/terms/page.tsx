@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
 import { DocumentPage } from "@/components/layout/DocumentPage";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import {
   EditorialLink,
   EditorialProse,
@@ -13,15 +13,20 @@ import {
   TERMS_GOVERNING_LAW,
 } from "@/lib/site-operator";
 
-export const metadata: Metadata = {
-  title: "Terms - PlantGeo",
-  description:
-    "How PlantGeo accounts, public requests, intervention review, and the assistant behave.",
-};
+const TITLE = "Terms - PlantGeo";
+const DESCRIPTION =
+  "How PlantGeo accounts, public requests, intervention review, and the assistant behave.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/terms",
+});
 
 export default function TermsPage() {
   return (
     <DocumentPage
+      jsonLd={{ name: TITLE, description: DESCRIPTION, path: "/terms" }}
       eyebrow="Terms"
       title="How the service behaves."
       lead="These are the rules the application enforces. What it stores, and which hosts receive a request, is on the Privacy page."

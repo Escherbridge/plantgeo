@@ -9,6 +9,7 @@ import {
   EditorialProse,
 } from "@/components/ui/editorial";
 import { RSS_ALTERNATE } from "@/lib/content/rss";
+import { OG_IMAGE } from "@/lib/public-metadata";
 import { SITE_TYPE_AUTHOR, SITE_TYPE_INDEX, SITE_TYPES, siteTypePath } from "@/lib/content/site-types";
 import { collectionStructuredData } from "@/lib/content/structured-data";
 
@@ -22,6 +23,13 @@ export const metadata: Metadata = {
     url: "/site-types",
     title: SITE_TYPE_INDEX.seoTitle,
     description: SITE_TYPE_INDEX.metaDescription,
+    images: [OG_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: SITE_TYPE_INDEX.seoTitle,
+    description: SITE_TYPE_INDEX.metaDescription,
+    images: [OG_IMAGE.url],
   },
 };
 
