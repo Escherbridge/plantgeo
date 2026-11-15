@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Fraunces, IBM_Plex_Mono } from "next/font/google";
+import { AuthWayfinding } from "@/components/auth/AuthWayfinding";
 import "./auth-background.css";
 
 const displayFont = Fraunces({
@@ -26,6 +27,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     <div
       className={`${displayFont.variable} ${monoFont.variable} relative flex min-h-screen items-center justify-center overflow-hidden bg-zinc-950 px-4 py-16 [font-family:var(--font-auth-mono)]`}
     >
+      <AuthWayfinding contentId="auth-card" />
       <div aria-hidden className="auth-contour-field pointer-events-none absolute inset-0" />
       <div
         aria-hidden
@@ -73,7 +75,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             className="pointer-events-none absolute -bottom-px -right-px h-4 w-4 border-b border-r border-emerald-500/40"
           />
 
-          <div className="relative [font-family:var(--font-auth-mono)]">{children}</div>
+          <div id="auth-card" className="relative [font-family:var(--font-auth-mono)]">{children}</div>
         </div>
       </div>
     </div>

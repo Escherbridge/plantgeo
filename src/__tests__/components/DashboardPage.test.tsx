@@ -1,12 +1,33 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const dashboardWidget = vi.hoisted(() => vi.fn());
+const plans = vi.hoisted(() => ({
+  rows: [] as { publicId: string; title: string; updatedAt: string }[],
+  isError: false,
+  isPending: false,
+}));
 vi.mock("@/components/dashboard/DashboardGrid", () => ({ DashboardGrid: dashboardWidget }));
 vi.mock("@/components/auth/UserMenu", () => ({ UserMenu: () => <div>Account menu</div> }));
+vi.mock("@/lib/trpc/client", () => ({
+  trpc: {
+    plans: {
+      list: {
+        useQuery: () => ({ data: plans.rows, isError: plans.isError, isPending: plans.isPending }),
+      },
+    },
+  },
+}));
 import DashboardPage from "@/app/dashboard/page";
 
 describe("Dashboard published entrypoints", () => {
+  afterEach(() => {
+    plans.rows = [];
+    plans.isError = false;
+    plans.isPending = false;
+    cleanup();
+  });
+
   it("keeps working destinations without mounting placeholder analytics", () => {
     render(<DashboardPage />);
     expect(screen.getByRole("link", { name: /Explore the map/ }).getAttribute("href")).toBe("/");
@@ -17,5 +38,22 @@ describe("Dashboard published entrypoints", () => {
     expect(screen.queryByText("Fleet Overview")).toBeNull();
     expect(screen.queryByText("Map Preview")).toBeNull();
     expect(screen.queryByText("Operational Metrics")).toBeNull();
+    expect(screen.getByRole("heading", { name: "Your plans" })).toBeTruthy();
+    expect(
+      screen.getByText(
+        "You haven't started a plan yet. Plans open on a sample area in Ada County, Idaho for now.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Start a plan" }).getAttribute("href")).toBe("/plan/new");
+  });
+
+  it("lists the signed-in account's plans with an Open link", () => {
+    plans.rows = [
+      { publicId: "plan_abc", title: "North bed", updatedAt: "2026-11-01T00:00:00.000Z" },
+    ];
+    render(<DashboardPage />);
+    expect(screen.getByText("North bed")).toBeTruthy();
+    expect(screen.getByText("Last edited 2026-11-01")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Open" }).getAttribute("href")).toBe("/plan/plan_abc");
   });
 });

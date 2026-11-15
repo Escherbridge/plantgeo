@@ -35,7 +35,8 @@ export default function InviteTokenPage() {
   if (linkAlreadyInvalid) {
     state = {
       status: "invalid",
-      message: "This invitation is no longer valid. It may have expired or already been used.",
+      message:
+        "It may have been used already, withdrawn, or run past its seven days. Ask the person who invited you for a new link.",
     };
   } else if (previewQuery.isLoading) {
     state = { status: "loading" };
@@ -44,7 +45,8 @@ export default function InviteTokenPage() {
   } else if (previewQuery.data && !previewQuery.data.valid) {
     state = {
       status: "invalid",
-      message: "This invitation is no longer valid. It may have expired or already been used.",
+      message:
+        "It may have been used already, withdrawn, or run past its seven days. Ask the person who invited you for a new link.",
     };
   } else if (previewQuery.data?.valid) {
     state = {
@@ -80,7 +82,7 @@ export default function InviteTokenPage() {
     <div className="flex flex-col gap-6">
       <div className="text-center">
         <h2 className="text-xl text-zinc-100 [font-family:var(--font-onboarding-display)]">
-          You&rsquo;ve been invited
+          {state.status === "invalid" ? "This invitation has expired." : "You've been invited"}
         </h2>
       </div>
 
@@ -146,12 +148,12 @@ export default function InviteTokenPage() {
         )}
       </InvitePreviewCard>
 
-      {(state.status === "invalid" || state.status === "error") && (
+      {(state.status === "invalid" || state.status === "error") && sessionStatus !== "loading" && (
         <Link
-          href="/dashboard"
+          href={isAuthenticated ? "/dashboard" : "/"}
           className="self-center text-xs text-zinc-500 transition-colors hover:text-zinc-300"
         >
-          Go to dashboard
+          {isAuthenticated ? "Go to dashboard" : "Open the map"}
         </Link>
       )}
     </div>
