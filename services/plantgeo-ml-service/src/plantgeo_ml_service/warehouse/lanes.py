@@ -101,7 +101,7 @@ LANE_CONTRACTS: Final[dict[str, LaneContract]] = {
         LaneContract(
             slug="weather-observations",
             history_floor=date(2026, 8, 1),
-            publication_lag_days=2,
+            publication_lag_days=1,
             nature="daily_series",
         ),
         # `weather-forecast` (FR-12) is ORIGINATED here, not copied: the sibling has deleted its own

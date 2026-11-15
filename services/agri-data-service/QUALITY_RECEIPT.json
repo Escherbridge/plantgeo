@@ -9,7 +9,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.07,
+      "duration_seconds": 1.045,
       "name": "format",
       "status": "pass"
     },
@@ -21,7 +21,7 @@
         "tests",
         "scripts"
       ],
-      "duration_seconds": 0.112,
+      "duration_seconds": 0.34,
       "name": "lint",
       "status": "pass"
     },
@@ -31,7 +31,7 @@
         "src",
         "scripts"
       ],
-      "duration_seconds": 2.029,
+      "duration_seconds": 38.728,
       "name": "mypy",
       "status": "pass"
     },
@@ -40,21 +40,26 @@
         "pytest",
         "-q"
       ],
-      "duration_seconds": 410.756,
+      "duration_seconds": 0.0,
       "name": "pytest",
-      "status": "pass"
+      "status": "waived",
+      "waiver": {
+        "operator": "Jade Zaher",
+        "reason": "1-line import move in land_context/watermark.py (availability_index -> availability_storage); 75 watermark/sibling tests verified green",
+        "waived_at": "2026-11-15T15:47:01.771804Z"
+      }
     }
   ],
   "digest_domain": "plantgeo.agri-data-service.quality-receipt.v2",
   "digest_file_count": 1273,
-  "generated_at": "2026-11-03T08:16:07.946192Z",
+  "generated_at": "2026-11-15T15:47:54.758176Z",
   "schema_version": 3,
   "tools": {
     "mypy": "mypy 2.3.0 (compiled: yes)",
     "pytest": "pytest 9.1.1",
-    "python": "3.12.10",
+    "python": "3.12.9",
     "ruff": "ruff 0.15.22",
     "uv": "uv 0.9.18 (0cee76417 2025-12-16)"
   },
-  "tree_digest": "sha256:946497cc1be06d3f0464f4b76a19a036baaa3f1e5434d71bacbbfb3652f5b1e9"
+  "tree_digest": "sha256:33fa46ab195fe4c264bc6a67a20bd8fd360b76541b240856d47c051286a994a5"
 }

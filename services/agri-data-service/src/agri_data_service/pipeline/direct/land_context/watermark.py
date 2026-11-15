@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING, Any
 
 from agri_data_service.foundation.parquet.lane_contract import SourceWatermark
 from agri_data_service.pipeline.direct.land_context.products import ARCHIVE_ROOT, SHA256_HEX_LENGTH
-from agri_data_service.pipeline.parquet.availability_index import BotoAvailabilityStorage
+from agri_data_service.pipeline.parquet.availability_storage import BotoAvailabilityStorage
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from agri_data_service.pipeline.parquet.availability_index import AvailabilityStorage, StoredAvailabilityObject
+    from agri_data_service.pipeline.parquet.availability_storage import AvailabilityStorage, StoredAvailabilityObject
     from agri_data_service.pipeline.parquet.objectstore import ObjectStore
 
 STATE_KEY = f"{ARCHIVE_ROOT}/_STATE.json"
