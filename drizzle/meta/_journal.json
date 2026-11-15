@@ -50,6 +50,13 @@
       "when": 1789344400000,
       "tag": "0006_site_plans_and_affiliate_applications",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789344500000,
+      "tag": "0007_affiliates",
+      "breakpoints": true
     }
   ]
 }

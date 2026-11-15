@@ -8,6 +8,7 @@ import { db } from "@/lib/server/db";
 import { teamMembers, users } from "@/lib/server/db/schema";
 import { authAdapterTables } from "@/lib/server/auth-schema";
 import { verifyPassword } from "@/lib/server/password";
+import { grantAffiliateRoleOnSignIn } from "@/lib/server/affiliate/role";
 import { normalizeAuthEmail } from "@/lib/server/security/registration";
 import type { ActiveTeamRole } from "@/types/next-auth";
 
@@ -188,6 +189,16 @@ export const authOptions: NextAuthOptions = {
         providerAssertsVerifiedEmail(account.provider, profile)
       ) {
         await stampProviderVerifiedEmail(userId);
+      }
+
+      // `user` is present only on sign-in. A later session read picks up the
+      // role this write stored. A failure here must not block the sign-in.
+      if (user) {
+        try {
+          await grantAffiliateRoleOnSignIn(db, userId);
+        } catch (error) {
+          console.error("[auth] Failed to grant affiliate role", error);
+        }
       }
 
       const update = trigger === "update" ? (session as unknown) : null;

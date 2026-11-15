@@ -747,3 +747,37 @@ export const affiliateApplications = pgTable(
     index("affiliate_applications_created_idx").on(table.createdAt),
   ]
 );
+
+/**
+ * Issued when an admin approves an application. One active code per email.
+ * No rate, payout, or payout date: a referral share has not been set.
+ */
+export const affiliates = pgTable(
+  "affiliates",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    applicationId: uuid("application_id")
+      .notNull()
+      .references(() => affiliateApplications.id),
+    email: text("email").notNull(),
+    name: text("name").notNull(),
+    organization: text("organization"),
+    code: text("code").notNull(),
+    status: text("status").notNull().default("active"),
+    userId: uuid("user_id").references(() => users.id),
+    approvedBy: uuid("approved_by").references(() => users.id),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    unique("affiliates_application_id_unique").on(table.applicationId),
+    unique("affiliates_code_unique").on(table.code),
+    check(
+      "affiliates_code_shape",
+      sql`${table.code} ~ '^[a-z0-9]([a-z0-9-]{0,62}[a-z0-9])?$'`
+    ),
+    check("affiliates_status_known", sql`${table.status} IN ('active', 'inactive')`),
+    uniqueIndex("affiliates_active_email_unique")
+      .on(table.email)
+      .where(sql`${table.status} = 'active'`),
+  ]
+);

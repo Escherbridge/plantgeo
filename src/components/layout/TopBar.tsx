@@ -28,6 +28,8 @@ const NAVIGATION_ITEMS = [
 /** Appended for expert/admin sessions only — mirrors expertProcedure at src/lib/server/trpc/init.ts. */
 const MODERATION_NAV_ITEM = { href: "/moderation", label: "Moderation" } as const;
 const MODERATION_ROLES = ["expert", "admin"];
+const AFFILIATE_REVIEW_NAV_ITEM = { href: "/dashboard/admin/affiliates", label: "Review affiliates" } as const;
+const AFFILIATE_INVITE_NAV_ITEM = { href: "/dashboard/affiliate", label: "Your invite link" } as const;
 
 type NavigationItem = { href: string; label: string };
 
@@ -308,6 +310,8 @@ export default function TopBar() {
   const navigationItems: NavigationItem[] = [
     ...NAVIGATION_ITEMS,
     ...(role && MODERATION_ROLES.includes(role) ? [MODERATION_NAV_ITEM] : []),
+    ...(role === "admin" ? [AFFILIATE_REVIEW_NAV_ITEM] : []),
+    ...(role === "affiliate" ? [AFFILIATE_INVITE_NAV_ITEM] : []),
   ];
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);

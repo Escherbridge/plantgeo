@@ -67,7 +67,8 @@ export const protectedProcedure = t.procedure.use(({ ctx, next }) => {
 export const contributorProcedure = t.procedure.use(({ ctx, next }) => {
   if (!ctx.session?.user) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Authentication required' });
   const role = (ctx.session?.user as { platformRole?: string } | undefined)?.platformRole;
-  if (!role || !["contributor", "expert", "admin"].includes(role)) {
+  // `affiliate` keeps a contributor's procedures. It adds no expert or admin power.
+  if (!role || !["contributor", "affiliate", "expert", "admin"].includes(role)) {
     throw new TRPCError({ code: "FORBIDDEN" });
   }
   return next({ ctx: { ...ctx, session: ctx.session! } });

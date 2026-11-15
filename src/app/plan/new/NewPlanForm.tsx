@@ -9,7 +9,7 @@ import { rememberGuestPlan, type SavedGuestPlan } from "@/lib/plans/guest-plan-l
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
-export function NewPlanForm() {
+export function NewPlanForm({ refCode }: { refCode?: string }) {
   const router = useRouter();
   const [title, setTitle] = useState("Site plan");
   const [notice, setNotice] = useState<string | null>(null);
@@ -34,7 +34,7 @@ export function NewPlanForm() {
         event.preventDefault();
         setNotice(null);
         void createPlan
-          .mutateAsync({ title })
+          .mutateAsync(refCode === undefined ? { title } : { title, refCode })
           .then((created) => {
             if (created.guestToken) {
               const saved = { publicId: created.publicId, token: created.guestToken, title };
