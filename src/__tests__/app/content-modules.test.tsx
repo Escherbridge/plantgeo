@@ -316,6 +316,8 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
   "nwi-wetlands": [
     "principal federal agency",
     "wetland and deepwater habitats",
+    "changes to these habitats over time",
+    "monitor changes in these habitats through time",
     "never settles a permit",
     "https://www.fws.gov/program/national-wetlands-inventory",
   ],
@@ -334,6 +336,7 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
     "https://www.usgs.gov/programs/national-geospatial-program/national-map",
   ],
   "base-flood-elevation": [
+    "a number like 482 or 2714",
     "1% chance of equaling or exceeding that level in any given year",
     "5 March 2020",
     "does not list a published BFE line",
@@ -342,6 +345,7 @@ const GUIDE_FIGURES: Record<string, readonly string[]> = {
   ],
   firmette: [
     "approximately two feet by three feet",
+    "for the purposing of making flood determinations",
     "a FIRMette cannot be created for preliminary maps",
     "not final regulatory products",
     "https://msc.fema.gov/portal/howto",
@@ -398,6 +402,7 @@ describe("field guides", () => {
     expect(text).toMatch(/over 90% of the U\.S\. population/);
     expect(text).toMatch(/at least 30 feet/);
     expect(text).toMatch(/1884 to 2006/);
+    expect(text).toMatch(/Last reviewed: 2026-11-15, America\/Denver/);
     expect(text).toMatch(/Firewise and IBHS zone widths distinct/);
     expect(text).not.toMatch(/\$13\.5/);
     expect(text).not.toMatch(/\d[\d,]* acres/i);
@@ -482,9 +487,9 @@ describe("field guides", () => {
         "/plan/new",
       );
       const text = container.textContent ?? "";
-      expect(text).not.toMatch(/\*\*|\]\(/);
+      expect(text).not.toMatch(/\*\*|\]\(|`/);
       expect(text).toMatch(/Author: Escherbridge/);
-      expect(text).toMatch(/Last reviewed: 2026-11-10, America\/Denver/);
+      expect(text).toMatch(/Last reviewed: 2026-11-15, America\/Denver/);
       expect(text).toMatch(/Map & legal note:/);
       expect(text).toMatch(/PlantGeo publishes no forecasts/);
       expect(text).toMatch(/not for sale yet/);
@@ -533,7 +538,7 @@ describe("field guides", () => {
       const crumbs = graph.find((node) => node["@type"] === "BreadcrumbList");
       expect(article?.headline).toBe(page.h1);
       expect(article?.datePublished).toBe("2026-11-10");
-      expect(article?.dateModified).toBe("2026-11-10");
+      expect(article?.dateModified).toBe("2026-11-15");
       expect(article?.mainEntityOfPage).toBe(`https://plantgeo.aevani.com/guides/${page.slug}`);
       expect(article?.author).toMatchObject({ name: "Escherbridge" });
       expect(article?.publisher).toMatchObject({ name: "Escherbridge", legalName: "Escherbridge, LLC" });
