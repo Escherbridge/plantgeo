@@ -63,6 +63,7 @@ export function PlanWorkspace({
   const [title, setTitle] = useState("Site plan");
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
+  const [guestLinkCopied, setGuestLinkCopied] = useState(false);
   const createPlan = trpc.plans.create.useMutation();
   const addItem = trpc.plans.addItem.useMutation();
   const updateItem = trpc.plans.updateItem.useMutation();
@@ -73,6 +74,19 @@ export function PlanWorkspace({
     [items]
   );
   const readOnly = !plan.canEdit;
+  const showGuestLink = Boolean(guestToken) && !plan.savedToAccount && !plan.isSample && !guestLinkCopied;
+
+  async function copyGuestLink() {
+    if (!guestToken) return;
+    const url = new URL(`/plan/${plan.publicId}`, window.location.origin);
+    url.searchParams.set("token", guestToken);
+    try {
+      await navigator.clipboard.writeText(url.toString());
+      setGuestLinkCopied(true);
+    } catch {
+      setNotice("The link could not be copied.");
+    }
+  }
 
   async function startPlan() {
     setNotice(null);
@@ -148,6 +162,41 @@ export function PlanWorkspace({
   return (
     <div className="viewport-below-top-bar flex w-full flex-col overflow-hidden bg-paper">
       {plan.isSample ? <SamplePlanBanner label={plan.sampleLabel} /> : null}
+      {showGuestLink ? (
+        <div className="shrink-0 border-b border-rule bg-paper px-comfortable py-comfortable">
+          <h2 className="font-editorial-display text-subheading text-ink">Keep this link.</h2>
+          <p className="mt-snug max-w-measure font-editorial-text text-body text-ink">
+            It&apos;s the only way to edit this plan without an account. Anyone with it can edit, so
+            share it carefully.
+          </p>
+          <div className="mt-comfortable flex flex-wrap gap-snug">
+            <button
+              type="button"
+              onClick={() => void copyGuestLink()}
+              className={cn(
+                "bg-ink px-comfortable py-snug font-editorial-label text-label text-paper uppercase hover:bg-accent hover:text-accent-ink",
+                editorialFocusRingInverse
+              )}
+            >
+              Copy edit link
+            </button>
+            <Link
+              href={`/register?callbackUrl=${encodeURIComponent(`/plan/${plan.publicId}`)}`}
+              className={cn(
+                "inline-flex items-center border border-rule bg-paper px-comfortable py-snug font-editorial-label text-label text-ink uppercase hover:border-accent hover:text-accent",
+                editorialFocusRing
+              )}
+            >
+              Create an account to keep this plan
+            </Link>
+          </div>
+        </div>
+      ) : null}
+      {guestLinkCopied ? (
+        <p role="status" className="shrink-0 px-comfortable py-snug font-editorial-text text-body text-ink">
+          Link copied.
+        </p>
+      ) : null}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <div className="relative min-h-0 flex-1">
           <MapErrorBoundary>

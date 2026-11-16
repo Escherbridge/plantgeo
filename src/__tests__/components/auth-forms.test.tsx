@@ -67,6 +67,7 @@ describe("registration form", () => {
 describe("sign-in after registration", () => {
   it("explains existing passwords without claiming email verification blocks sign-in", () => {
     render(<LoginView />);
+    expect(screen.getByText("Sign in to see your site plans and the map.")).toBeTruthy();
     expect(screen.getByText(/its password has not changed/).textContent).toContain("Sign in with your account password");
     expect(screen.queryByText(/before signing in/)).toBeNull();
     expect(screen.getByRole("link", { name: "Forgot password?" }).getAttribute("href")).toBe("/forgot-password");

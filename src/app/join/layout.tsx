@@ -14,6 +14,7 @@ export default function JoinLayout({ children }: { children: React.ReactNode }) 
     <ConsoleShell
       eyebrow="Geospatial Access"
       maxWidthClassName="max-w-md"
+      wayfinding
       cornerLabel={
         <>
           Join Code

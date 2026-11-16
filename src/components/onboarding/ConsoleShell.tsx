@@ -1,4 +1,5 @@
 import { Fraunces, IBM_Plex_Mono } from "next/font/google";
+import { AuthWayfinding } from "@/components/auth/AuthWayfinding";
 import "@/app/onboarding/onboarding-background.css";
 
 const displayFont = Fraunces({
@@ -19,6 +20,8 @@ interface ConsoleShellProps {
   eyebrow: string;
   cornerLabel: React.ReactNode;
   maxWidthClassName?: string;
+  /** Invite and join. Onboarding keeps its own exit and does not use this. */
+  wayfinding?: boolean;
 }
 
 /** Scrollable frame for onboarding, invite, and join pages. */
@@ -27,11 +30,13 @@ export function ConsoleShell({
   eyebrow,
   cornerLabel,
   maxWidthClassName = "max-w-2xl",
+  wayfinding = false,
 }: ConsoleShellProps) {
   return (
     <div
       className={`${displayFont.variable} ${monoFont.variable} relative flex h-dvh items-start justify-center overflow-y-auto bg-zinc-950 px-4 py-8 sm:py-16 [font-family:var(--font-onboarding-mono)]`}
     >
+      {wayfinding ? <AuthWayfinding contentId="console-card" /> : null}
       <div aria-hidden className="onboarding-waypoint-field pointer-events-none absolute inset-0" />
       <div
         aria-hidden
@@ -75,7 +80,7 @@ export function ConsoleShell({
             className="pointer-events-none absolute -bottom-px -right-px h-4 w-4 border-b border-r border-emerald-500/40"
           />
 
-          <div className="relative">{children}</div>
+          <div id="console-card" className="relative">{children}</div>
         </div>
       </div>
     </div>

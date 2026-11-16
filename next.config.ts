@@ -77,6 +77,12 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      { source: "/signup", destination: "/register", permanent: true },
+      { source: "/sign-up", destination: "/register", permanent: true },
+    ];
+  },
   // Allow tile/terrain image sources
   images: {
     remotePatterns: [

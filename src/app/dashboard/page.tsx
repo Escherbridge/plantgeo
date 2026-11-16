@@ -2,6 +2,13 @@
 
 import Link from "next/link";
 import { UserMenu } from "@/components/auth/UserMenu";
+import { trpc } from "@/lib/trpc/client";
+
+function lastEdited(value: Date | string): string {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString().slice(0, 10);
+}
 
 const DASHBOARD_SECTIONS = [
   {
@@ -28,6 +35,9 @@ const DASHBOARD_SECTIONS = [
 
 /** Working account destinations; see AGENTS.md for deferred analytics widgets. */
 export default function DashboardPage() {
+  const plansQuery = trpc.plans.list.useQuery(undefined, { retry: false });
+  const plans = plansQuery.data ?? [];
+
   return (
     <div className="viewport-below-top-bar bg-[hsl(var(--background))] flex flex-col">
       <header className="min-h-14 shrink-0 border-b border-[hsl(var(--border))] flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
@@ -43,7 +53,51 @@ export default function DashboardPage() {
         <p className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
           Explore a location, revisit an analysis or manage your organization.
         </p>
-        <nav aria-label="Dashboard sections" className="mt-6 grid gap-4 sm:grid-cols-3">
+        <section
+          aria-labelledby="your-plans-heading"
+          className="mt-6 rounded-lg border border-[hsl(var(--border))] bg-[hsl(var(--card))] p-5"
+        >
+          <h2 id="your-plans-heading" className="text-sm font-semibold text-[hsl(var(--foreground))]">
+            Your plans
+          </h2>
+          {plansQuery.isPending ? null : plansQuery.isError ? (
+            <p role="status" className="mt-2 text-sm text-[hsl(var(--muted-foreground))]">
+              Your plans could not be loaded.
+            </p>
+          ) : plans.length === 0 ? (
+            <div className="mt-2">
+              <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                You haven&apos;t started a plan yet. Plans open on a sample area in Ada County, Idaho for now.
+              </p>
+              <Link
+                href="/plan/new"
+                className="mt-3 inline-flex rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-500"
+              >
+                Start a plan
+              </Link>
+            </div>
+          ) : (
+            <ul className="mt-3 divide-y divide-[hsl(var(--border))]">
+              {plans.map((plan) => (
+                <li key={plan.publicId} className="flex flex-wrap items-baseline justify-between gap-3 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-[hsl(var(--foreground))]">{plan.title}</p>
+                    <p className="text-sm text-[hsl(var(--muted-foreground))]">
+                      Last edited {lastEdited(plan.updatedAt)}
+                    </p>
+                  </div>
+                  <Link
+                    href={`/plan/${plan.publicId}`}
+                    className="text-sm font-medium text-emerald-500 underline underline-offset-4"
+                  >
+                    Open
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        <nav aria-label="Dashboard sections" className="mt-4 grid gap-4 sm:grid-cols-3">
           {DASHBOARD_SECTIONS.map((section) => (
             <Link
               key={section.href}

@@ -1,6 +1,6 @@
 import { randomBytes } from "crypto";
 import { TRPCError } from "@trpc/server";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { isPlanBbox } from "@/lib/plans/bbox";
 import { normalizeRefCode, readPlanRefCookie } from "@/lib/plans/ref-code";
@@ -11,7 +11,7 @@ import { checkRateLimit } from "@/lib/server/middleware/api-auth";
 import { canEditSitePlan, issueGuestPlanToken } from "@/lib/server/plans/access";
 import { ipRateLimitKey } from "@/lib/server/security/registration";
 import type { Context } from "@/lib/server/trpc/init";
-import { publicProcedure, router } from "@/lib/server/trpc/init";
+import { protectedProcedure, publicProcedure, router } from "@/lib/server/trpc/init";
 
 const PLAN_CREATES_PER_MINUTE = 10;
 const PLAN_EDITS_PER_MINUTE = 60;
@@ -140,6 +140,23 @@ async function requireEditablePlan(
 }
 
 export const plansRouter = router({
+  /** Plans saved to the signed-in account. Guest-token plans are not listed. */
+  list: protectedProcedure.query(async ({ ctx }) => {
+    const ownerUserId = ctx.session.user.id;
+    if (typeof ownerUserId !== "string" || ownerUserId.length === 0) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+    return ctx.db
+      .select({
+        publicId: sitePlans.publicId,
+        title: sitePlans.title,
+        updatedAt: sitePlans.updatedAt,
+      })
+      .from(sitePlans)
+      .where(and(eq(sitePlans.ownerUserId, ownerUserId), eq(sitePlans.isSample, false)))
+      .orderBy(desc(sitePlans.updatedAt));
+  }),
+
   getSample: publicProcedure.query(async ({ ctx }) => {
     const plan = await loadPlan(ctx.db, SAMPLE_PLAN_PUBLIC_ID);
     if (!plan?.isSample) return null;

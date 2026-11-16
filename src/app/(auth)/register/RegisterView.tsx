@@ -20,7 +20,7 @@ export function RegisterView() {
         <h2 className="text-xl text-zinc-100 [font-family:var(--font-auth-display)]">
           Create your account
         </h2>
-        <p className="mt-1 text-xs text-zinc-500">Join the field team monitoring the network.</p>
+        <p className="mt-1 text-xs text-zinc-500">Create an account to save site plans and come back to them.</p>
       </div>
       <RegisterForm callbackUrl={callbackUrl} />
       <p className="text-center text-xs text-zinc-500">

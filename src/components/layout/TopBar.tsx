@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 
 const NAVIGATION_ITEMS = [
   { href: "/", label: "Map" },
+  { href: "/plan/new", label: "Plan a site" },
   { href: "/feed", label: "Feed" },
   { href: "/community", label: "Community" },
   { href: "/about", label: "About" },

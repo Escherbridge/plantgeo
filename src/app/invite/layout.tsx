@@ -14,6 +14,7 @@ export default function InviteLayout({ children }: { children: React.ReactNode }
     <ConsoleShell
       eyebrow="Geospatial Access"
       maxWidthClassName="max-w-md"
+      wayfinding
       cornerLabel={
         <>
           Invitation
