@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { SITE_ORIGIN } from "@/lib/public-site";
 import { SISTER_SITES } from "@/lib/sister-sites";
-import { OPERATOR_LEGAL_NAME, OPERATOR_POSTAL_ADDRESS } from "@/lib/site-operator";
+import { OPERATOR_EMAIL, OPERATOR_LEGAL_NAME, OPERATOR_POSTAL_ADDRESS } from "@/lib/site-operator";
 
 export const SITE_NAME = "PlantGeo";
 
@@ -32,8 +32,11 @@ export const siteDiscoveryGraph = {
     {
       "@type": "Organization",
       "@id": `${SITE_ORIGIN}/#organization`,
-      name: OPERATOR_LEGAL_NAME,
+      name: SITE_NAME,
+      legalName: OPERATOR_LEGAL_NAME,
       url: SITE_ORIGIN,
+      email: OPERATOR_EMAIL,
+      logo: `${SITE_ORIGIN}/icons/icon-192.png`,
       address: OPERATOR_POSTAL_ADDRESS,
       sameAs: SISTER_SITES.map((site) => site.href),
     },
@@ -42,6 +45,7 @@ export const siteDiscoveryGraph = {
       "@id": `${SITE_ORIGIN}/#website`,
       name: SITE_NAME,
       url: SITE_ORIGIN,
+      inLanguage: "en-US",
       publisher: { "@id": `${SITE_ORIGIN}/#organization` },
     },
   ],

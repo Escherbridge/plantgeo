@@ -1,5 +1,6 @@
-import type { Metadata } from "next";
 import { CommunityLedger } from "@/app/community/CommunityLedger";
+import { PublicJsonLd } from "@/components/content/PublicJsonLd";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import {
   EditorialContainer,
   EditorialDisplay,
@@ -10,15 +11,20 @@ import {
   EditorialPage,
 } from "@/components/ui/editorial";
 
-export const metadata: Metadata = {
-  title: "Community - PlantGeo",
-  description:
-    "Strategy requests publish their location, title, and description on the public map immediately. Anyone can read a request; sign in to read comments. Intervention proposals follow a separate review process.",
-};
+const TITLE = "Community - PlantGeo";
+const DESCRIPTION =
+  "Strategy requests publish their location, title, and description on the public map immediately. Anyone can read a request; sign in to read comments. Intervention proposals follow a separate review process.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/community",
+});
 
 export default function CommunityPage() {
   return (
     <EditorialPage>
+      <PublicJsonLd name={TITLE} description={DESCRIPTION} path="/community" />
       <EditorialContainer>
         <header className="pt-section pb-roomy">
           <EditorialGrid>

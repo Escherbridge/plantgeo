@@ -8,6 +8,7 @@ import {
   EditorialProse,
 } from "@/components/ui/editorial";
 import { RSS_ALTERNATE } from "@/lib/content/rss";
+import { OG_IMAGE } from "@/lib/public-metadata";
 import { collectionStructuredData } from "@/lib/content/structured-data";
 
 const TITLE = "News — PlantGeo";
@@ -17,7 +18,19 @@ export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
   alternates: { canonical: "/news", types: RSS_ALTERNATE },
-  openGraph: { type: "website", url: "/news", title: TITLE, description: DESCRIPTION },
+  openGraph: {
+    type: "website",
+    url: "/news",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [OG_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [OG_IMAGE.url],
+  },
 };
 
 export default function NewsIndexPage() {

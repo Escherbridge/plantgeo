@@ -207,7 +207,8 @@ describe("organization JSON-LD", () => {
       address?: Record<string, string>;
     };
     const website = data["@graph"]?.find((node) => node["@type"] === "WebSite");
-    expect(organization?.name).toBe("Escherbridge, LLC");
+    expect(organization?.name).toBe("PlantGeo");
+    expect(organization).toMatchObject({ legalName: "Escherbridge, LLC" });
     expect(organization?.address).toEqual({
       "@type": "PostalAddress",
       addressLocality: "Boise",

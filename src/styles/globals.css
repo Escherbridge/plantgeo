@@ -590,6 +590,25 @@ body {
   color: var(--editorial-color-ink);
 }
 
+@keyframes sister-ticker {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.sister-ticker-track {
+  animation: sister-ticker 45s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sister-ticker-track {
+    animation: none;
+  }
+}
+
 .home-document:has([data-map-ready]) .home-crawlable {
   position: absolute;
   inset: auto;

@@ -10,6 +10,7 @@ import {
   EditorialProse,
 } from "@/components/ui/editorial";
 import { RSS_ALTERNATE } from "@/lib/content/rss";
+import { OG_IMAGE } from "@/lib/public-metadata";
 import { collectionStructuredData } from "@/lib/content/structured-data";
 import { ESSAY_AUTHOR } from "@/lib/writing/essay-metadata";
 import { blogPath, ESSAYS, essayDisplayDate } from "@/lib/writing/essays";
@@ -22,7 +23,19 @@ export const metadata: Metadata = {
   title: TITLE,
   description: DESCRIPTION,
   alternates: { canonical: "/blog", types: RSS_ALTERNATE },
-  openGraph: { type: "website", url: "/blog", title: TITLE, description: DESCRIPTION },
+  openGraph: {
+    type: "website",
+    url: "/blog",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [OG_IMAGE],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: TITLE,
+    description: DESCRIPTION,
+    images: [OG_IMAGE.url],
+  },
 };
 
 export default function BlogIndexPage() {

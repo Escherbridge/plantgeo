@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/server/auth";
+import { PRIVATE_ROUTE_ROBOTS } from "@/lib/public-site";
 
 export const metadata: Metadata = {
   title: "Platform Admin - PlantGeo",
   description: "Platform administration for the durable job runner.",
+  robots: PRIVATE_ROUTE_ROBOTS,
 };
 
 /**

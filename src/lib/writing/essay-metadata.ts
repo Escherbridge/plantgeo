@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { OG_IMAGE } from "@/lib/public-metadata";
 import type { Essay } from "@/lib/writing/essays";
 import { blogPath } from "@/lib/writing/essays";
 
@@ -18,6 +19,13 @@ export function essayPageMetadata(essay: Essay): Metadata {
       title,
       description: essay.summary,
       publishedTime: essay.date,
+      images: [OG_IMAGE],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title,
+      description: essay.summary,
+      images: [OG_IMAGE.url],
     },
   };
 }

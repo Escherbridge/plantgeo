@@ -3,8 +3,8 @@ import { Archivo, IBM_Plex_Mono, Newsreader } from "next/font/google";
 import { Providers } from "@/lib/providers";
 import { ApplicationShell } from "@/components/layout/ApplicationShell";
 import { Toaster } from "@/components/ui/toast";
+import { OG_IMAGE, PUBLIC_AUTHOR } from "@/lib/public-metadata";
 import { SiteDiscoveryJsonLd, siteDiscoveryMetadata } from "@/lib/site-discovery";
-import { SITE_ORIGIN } from "@/lib/public-site";
 import "@/styles/globals.css";
 
 /** Grotesque for display, serif for reading, mono for labels. */
@@ -34,13 +34,14 @@ const editorialFontVariables = [
   editorialLabelFont.variable,
 ].join(" ");
 
-const OG_IMAGE_URL = `${SITE_ORIGIN}/og.png`;
-
 export const metadata: Metadata = {
   ...siteDiscoveryMetadata,
   title: "PlantGeo - 3D Geospatial Platform",
   description:
     "Open-source 3D mapping platform for wildfire prevention, ecosystem monitoring, and geospatial intelligence",
+  authors: [{ name: PUBLIC_AUTHOR }],
+  creator: PUBLIC_AUTHOR,
+  publisher: PUBLIC_AUTHOR,
   icons: {
     icon: [
       { url: "/favicon.ico", sizes: "32x32 48x48" },
@@ -51,18 +52,14 @@ export const metadata: Metadata = {
   },
   openGraph: {
     ...siteDiscoveryMetadata.openGraph,
-    images: [
-      {
-        url: OG_IMAGE_URL,
-        width: 1200,
-        height: 630,
-        alt: "PlantGeo",
-      },
-    ],
+    siteName: "PlantGeo",
+    locale: "en_US",
+    type: "website",
+    images: [OG_IMAGE],
   },
   twitter: {
     card: "summary_large_image",
-    images: [OG_IMAGE_URL],
+    images: [OG_IMAGE.url],
   },
 };
 

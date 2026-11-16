@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { RSS_ALTERNATE } from "@/lib/content/rss";
+import { OG_IMAGE } from "@/lib/public-metadata";
 import {
   SITE_TYPE_AUTHOR,
   siteTypePath,
@@ -19,6 +20,14 @@ export function siteTypeArticleMetadata(page: SiteTypeArticle): Metadata {
       title: page.seoTitle,
       description: page.metaDescription,
       publishedTime: page.publishedAt,
+      modifiedTime: page.lastReviewed,
+      images: [OG_IMAGE],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: page.seoTitle,
+      description: page.metaDescription,
+      images: [OG_IMAGE.url],
     },
   };
 }

@@ -1,12 +1,14 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { getServerSession } from "@/lib/server/auth";
+import { PRIVATE_ROUTE_ROBOTS } from "@/lib/public-site";
 import { ContributionQueue } from "@/components/panels/ContributionQueue";
 import { ModerationPanel } from "@/components/panels/ModerationPanel";
 
 export const metadata: Metadata = {
   title: "Moderation - PlantGeo",
   description: "Review community-submitted intervention recommendations before they publish to the map, and track published interventions through their lifecycle.",
+  robots: PRIVATE_ROUTE_ROBOTS,
 };
 
 const MODERATION_ROLES = ["expert", "admin"];

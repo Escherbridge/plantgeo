@@ -50,6 +50,7 @@ describe("Aevani catalog read", () => {
     expect(result.products[0]).toMatchObject({
       id: "product_12",
       title: "Sample kit",
+      category: "Kits",
       comingSoon: true,
       availabilityLabel: "Coming soon",
       canonicalUrl: "https://aevani.com/products/sample-kit",
@@ -58,6 +59,37 @@ describe("Aevani catalog read", () => {
     expect(result.products[0]?.priceLabel).toContain("19.99");
     expect(JSON.stringify(result)).not.toContain("SECRET-SKU");
     expect(JSON.stringify(result)).not.toContain("costPrice");
+  });
+
+  it("accepts the live catalog category object and displays its name", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue({
+      contractVersion: "v1",
+      products: [
+        {
+          id: "product_46",
+          canonicalUrl: "https://aevani.com/products/heirloom/sample",
+          title: "Heirloom tomato",
+          summary: "A planning reference",
+          price: { amountMinor: 500, currency: "USD" },
+          availability: "unavailable",
+          category: { id: "category_46", name: "Heirloom Seeds", slug: "heirloom-seeds" },
+          images: [{ url: "https://aevani.com/images/seed.jpg", alt: "Seeds" }],
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const result = await readAevaniCatalog();
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    expect(result.products[0]).toMatchObject({
+      id: "product_46",
+      title: "Heirloom tomato",
+      category: "Heirloom Seeds",
+      comingSoon: true,
+      availabilityLabel: "Coming soon",
+      canonicalUrl: "https://aevani.com/products/heirloom/sample",
+    });
   });
 
   it("drops cart and checkout links and follows one cursor", async () => {

@@ -1,6 +1,7 @@
-import type { Metadata } from "next";
 import Link from "next/link";
+import { PublicJsonLd } from "@/components/content/PublicJsonLd";
 import { MapLegalNote, PlanFunnelGate } from "@/components/content/PlanFunnelGate";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import {
   EditorialContainer,
   EditorialDisplay,
@@ -10,12 +11,15 @@ import {
 } from "@/components/ui/editorial";
 import { blogPath, ESSAYS, essayDisplayDate } from "@/lib/writing/essays";
 
-export const metadata: Metadata = {
-  title: "Field Blog & Notes — PlantGeo",
-  description:
-    "Field walks and planning notes on reading sun, slope, drainage, wet spots, soils, and microclimates before staking beds or buying equipment.",
-  alternates: { canonical: "/writing" },
-};
+const TITLE = "Field Blog & Notes — PlantGeo";
+const DESCRIPTION =
+  "Field walks and planning notes on reading sun, slope, drainage, wet spots, soils, and microclimates before staking beds or buying equipment.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/writing",
+});
 
 export default function WritingIndexPage() {
   const posts = [...ESSAYS].sort(
@@ -24,6 +28,7 @@ export default function WritingIndexPage() {
 
   return (
     <EditorialPage>
+      <PublicJsonLd name={TITLE} description={DESCRIPTION} path="/writing" />
       <EditorialContainer>
         <header className="pt-section pb-roomy">
           <EditorialEyebrow>Writing &amp; Field Stories</EditorialEyebrow>

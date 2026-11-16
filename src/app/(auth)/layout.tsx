@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { PRIVATE_ROUTE_ROBOTS } from "@/lib/public-site";
 import { Fraunces, IBM_Plex_Mono } from "next/font/google";
 import { AuthWayfinding } from "@/components/auth/AuthWayfinding";
 import "./auth-background.css";
@@ -19,6 +20,7 @@ const monoFont = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "PlantGeo - Access",
   description: "Sign in or create an account to access the PlantGeo dashboard.",
+  robots: PRIVATE_ROUTE_ROBOTS,
 };
 
 /** Shared shell for the auth flow: centered card over a topographic field. */
