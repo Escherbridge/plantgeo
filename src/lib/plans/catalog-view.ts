@@ -1,4 +1,4 @@
-/** Allowlisted catalog card. Prices appear only when the catalog response included them. */
+/** Allowlisted catalog card. A Coming soon item never carries a price. */
 export type CatalogProductCard = {
   id: string;
   title: string;

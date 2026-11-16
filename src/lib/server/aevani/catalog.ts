@@ -168,7 +168,7 @@ function toCard(raw: unknown): CatalogProductCard | null {
     imageAlt: image?.alt ?? null,
     comingSoon: availability.comingSoon,
     availabilityLabel: availability.label,
-    priceLabel: priceLabel(product.price),
+    priceLabel: availability.comingSoon ? null : priceLabel(product.price),
   };
 }
 

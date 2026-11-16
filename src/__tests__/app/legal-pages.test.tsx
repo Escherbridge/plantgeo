@@ -111,6 +111,7 @@ describe("legal pages", () => {
     expect(text).toMatch(/OpenRouter/);
     expect(text).toMatch(/Esri World Imagery/);
     expect(text).toMatch(/plantgeo-search/);
+    expect(text).toMatch(/plantgeo-guest-plans/);
     expect(text).toMatch(/at least three records/);
     expect(text).toContain(AI_GENERATED_DISCLAIMER);
     expect(text).toContain("This site is operated by Escherbridge, LLC.");
