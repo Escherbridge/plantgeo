@@ -1,18 +1,23 @@
-import type { Metadata } from "next";
 import Link from "next/link";
 import { NewPlanForm } from "@/app/plan/new/NewPlanForm";
 import { DocumentPage } from "@/components/layout/DocumentPage";
 import { EditorialLink, EditorialProse, EditorialSection } from "@/components/ui/editorial";
+import { publicPageMetadata } from "@/lib/public-metadata";
 
-export const metadata: Metadata = {
-  title: "Start a site plan - PlantGeo",
-  description:
-    "Start a site plan on PlantGeo's live map. A signed-in plan is saved to your account. A guest plan is saved to a private link.",
-};
+const TITLE = "Start a site plan - PlantGeo";
+const DESCRIPTION =
+  "Start a site plan on PlantGeo's live map. A signed-in plan is saved to your account. A guest plan is saved to a private link.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/plan/new",
+});
 
 export default function NewPlanPage() {
   return (
     <DocumentPage
+      jsonLd={{ name: TITLE, description: DESCRIPTION, path: "/plan/new" }}
       eyebrow="Site plan"
       title="Start a plan on the live map."
       lead="The plan opens on the same demonstration area as the sample. Catalog picks are planning references."

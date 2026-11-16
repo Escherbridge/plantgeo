@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
 import { DocumentPage } from "@/components/layout/DocumentPage";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import {
   EditorialLink,
   EditorialProse,
@@ -14,14 +14,19 @@ import {
   OPERATOR_PHONE_TEL,
 } from "@/lib/site-operator";
 
-export const metadata: Metadata = {
-  title: "Contact - PlantGeo",
-  description: `${OPERATOR_LEGAL_NAME} operates PlantGeo from ${OPERATOR_LOCATION}. Contact ${OPERATOR_CONTACT_NAME} at ${OPERATOR_EMAIL} or ${OPERATOR_PHONE_DISPLAY}. Account mail is sent to an address already on the account.`,
-};
+const TITLE = "Contact - PlantGeo";
+const DESCRIPTION = `${OPERATOR_LEGAL_NAME} operates PlantGeo from ${OPERATOR_LOCATION}. Contact ${OPERATOR_CONTACT_NAME} at ${OPERATOR_EMAIL} or ${OPERATOR_PHONE_DISPLAY}. Account mail is sent to an address already on the account.`;
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/contact",
+});
 
 export default function ContactPage() {
   return (
     <DocumentPage
+      jsonLd={{ name: TITLE, description: DESCRIPTION, path: "/contact" }}
       eyebrow="Contact"
       title="Reach the operator."
       lead={`${OPERATOR_LEGAL_NAME} operates this site. This page does not collect a message.`}

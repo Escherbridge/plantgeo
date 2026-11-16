@@ -70,9 +70,27 @@ describe("site discovery metadata", () => {
     expect(planning.alternates?.canonical).toBe("/blog/plan-the-land-then-pick-the-tools");
   });
 
-  it("points robots.txt at the sitemap on the public origin", () => {
+  it("points robots.txt at the sitemap and keeps app routes out", () => {
     expect(robots().sitemap).toBe(`${SITE_ORIGIN}/sitemap.xml`);
-    expect(robots().rules).toEqual({ userAgent: "*", allow: "/" });
+    expect(robots().rules).toEqual({
+      userAgent: "*",
+      allow: "/",
+      disallow: [
+        "/api/",
+        "/admin",
+        "/dashboard",
+        "/embed",
+        "/forgot-password",
+        "/invite/",
+        "/join/",
+        "/login",
+        "/moderation",
+        "/onboarding",
+        "/register",
+        "/reset-password",
+        "/verify-email",
+      ],
+    });
   });
 
   it("renders one Organization and WebSite graph, with the sister sameAs list", () => {
@@ -87,8 +105,11 @@ describe("site discovery metadata", () => {
     const graph = siteDiscoveryGraph["@graph"];
     expect(graph.map((node) => node["@type"])).toEqual(["Organization", "WebSite"]);
     expect(graph[0]).toMatchObject({
-      name: "Escherbridge, LLC",
+      name: "PlantGeo",
+      legalName: "Escherbridge, LLC",
       url: SITE_ORIGIN,
+      email: "contact@escherbridge.com",
+      logo: `${SITE_ORIGIN}/icons/icon-192.png`,
       address: {
         "@type": "PostalAddress",
         addressLocality: "Boise",
@@ -106,6 +127,7 @@ describe("site discovery metadata", () => {
     expect(graph[1]).toMatchObject({
       name: "PlantGeo",
       url: SITE_ORIGIN,
+      inLanguage: "en-US",
       publisher: { "@id": `${SITE_ORIGIN}/#organization` },
     });
 
@@ -113,8 +135,7 @@ describe("site discovery metadata", () => {
     for (const host of FORBIDDEN_HOSTS) {
       expect(serialized).not.toContain(host);
     }
-    expect(Object.keys(graph[0] ?? {})).not.toContain("logo");
-    expect(serialized).not.toContain('"logo"');
+    expect(serialized).toContain(`${SITE_ORIGIN}/icons/icon-192.png`);
     expect(serialized).not.toContain("streetAddress");
     expect(serialized).not.toContain("postalCode");
   });

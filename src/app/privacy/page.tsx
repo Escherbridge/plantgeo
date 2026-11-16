@@ -1,5 +1,5 @@
-import type { Metadata } from "next";
 import { DocumentPage } from "@/components/layout/DocumentPage";
+import { publicPageMetadata } from "@/lib/public-metadata";
 import {
   EditorialDefinitionList,
   EditorialLink,
@@ -14,11 +14,15 @@ import {
   OPERATOR_LINE,
 } from "@/lib/site-operator";
 
-export const metadata: Metadata = {
-  title: "Privacy - PlantGeo",
-  description:
-    "What PlantGeo stores for accounts, the map, the assistant, and the browser, and which hosts receive a request.",
-};
+const TITLE = "Privacy - PlantGeo";
+const DESCRIPTION =
+  "What PlantGeo stores for accounts, the map, the assistant, and the browser, and which hosts receive a request.";
+
+export const metadata = publicPageMetadata({
+  title: TITLE,
+  description: DESCRIPTION,
+  path: "/privacy",
+});
 
 const browserHosts = [
   {
@@ -83,6 +87,7 @@ const deviceStores = [
 export default function PrivacyPage() {
   return (
     <DocumentPage
+      jsonLd={{ name: TITLE, description: DESCRIPTION, path: "/privacy" }}
       eyebrow="Privacy"
       title="What the application stores."
       lead="This page describes the records and requests the running application makes. Account, map, and assistant behavior is summarized again on the Terms page."

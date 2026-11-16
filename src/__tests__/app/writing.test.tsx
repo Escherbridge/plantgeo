@@ -53,6 +53,7 @@ describe("essays", () => {
       const { container, unmount } = render(page);
       const view = within(container);
       const text = container.textContent ?? "";
+      expect(text).not.toMatch(/\*\*|\]\(|## /);
 
       expect(view.getByRole("heading", { level: 1 })).toBeTruthy();
       expect(

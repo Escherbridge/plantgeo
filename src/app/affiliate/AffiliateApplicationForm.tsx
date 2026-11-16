@@ -114,18 +114,15 @@ export function AffiliateApplicationForm() {
         </label>
         <textarea id="affiliate-message" maxLength={4000} rows={5} value={message} onChange={(event) => setMessage(event.target.value)} className={cn(fieldClass, editorialFocusRing)} />
       </div>
-      <div aria-hidden="true" className="absolute left-[-9999px] h-px w-px overflow-hidden">
-        <label htmlFor="affiliate-fax">
-          Fax
-          <input
-            id="affiliate-fax"
-            name="fax_number"
-            tabIndex={-1}
-            autoComplete="off"
-            value={faxNumber}
-            onChange={(event) => setFaxNumber(event.target.value)}
-          />
-        </label>
+      <div inert aria-hidden="true" className="absolute -left-[9999px] h-px w-px overflow-hidden">
+        <input
+          id="affiliate-fax"
+          name="fax_number"
+          tabIndex={-1}
+          autoComplete="off"
+          value={faxNumber}
+          onChange={(event) => setFaxNumber(event.target.value)}
+        />
       </div>
       <button
         type="submit"

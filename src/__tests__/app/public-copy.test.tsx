@@ -115,6 +115,10 @@ describe("affiliate page", () => {
     followLink("Aevani catalogue items");
     expect(screen.getByLabelText("Name")).toBeTruthy();
     expect(screen.getByLabelText("Email")).toBeTruthy();
-    expect(affiliateMetadata.alternates).toEqual({ canonical: "/affiliate" });
+    expect(affiliateMetadata.alternates?.canonical).toBe("/affiliate");
+    expect(affiliateMetadata.openGraph).toMatchObject({
+      title: "Invite people to plan a site - PlantGeo",
+      url: "/affiliate",
+    });
   });
 });

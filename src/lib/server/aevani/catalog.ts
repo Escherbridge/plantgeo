@@ -29,7 +29,19 @@ const productSchema = z
     summary: z.string().trim().max(2_000).nullable().optional(),
     price: priceSchema.nullable().optional(),
     availability: z.string().trim().max(40).nullable().optional(),
-    category: z.string().trim().max(120).nullable().optional(),
+    category: z
+      .union([
+        z.string().trim().max(120),
+        z
+          .object({
+            id: z.string().trim().min(1).max(80).optional(),
+            name: z.string().trim().min(1).max(120),
+            slug: z.string().trim().min(1).max(160).optional(),
+          })
+          .strip(),
+      ])
+      .nullable()
+      .optional(),
     images: z
       .array(
         z
@@ -128,6 +140,15 @@ function priceLabel(price: { amountMinor: number; currency: string } | null | un
   }
 }
 
+function categoryLabel(
+  category: string | { name: string } | null | undefined,
+): string | null {
+  if (!category) return null;
+  const name = typeof category === "string" ? category : category.name;
+  const trimmed = name.trim();
+  return trimmed ? trimmed : null;
+}
+
 function toCard(raw: unknown): CatalogProductCard | null {
   const parsed = productSchema.safeParse(raw);
   if (!parsed.success) return null;
@@ -141,7 +162,7 @@ function toCard(raw: unknown): CatalogProductCard | null {
     id: product.id,
     title: product.title,
     summary: product.summary?.trim() ? product.summary.trim() : null,
-    category: product.category?.trim() ? product.category.trim() : null,
+    category: categoryLabel(product.category),
     canonicalUrl: productPageUrl(product.canonicalUrl),
     imageUrl: image?.url ?? null,
     imageAlt: image?.alt ?? null,

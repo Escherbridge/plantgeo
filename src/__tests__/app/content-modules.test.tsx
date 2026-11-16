@@ -230,6 +230,7 @@ describe("news and site types", () => {
       expect(view.getByRole("heading", { level: 2, name: "Sources" })).toBeTruthy();
       expect(view.getByRole("heading", { level: 2, name: "A situation like this" })).toBeTruthy();
       const text = container.textContent ?? "";
+      expect(text).not.toMatch(/\*\*|\]\(/);
       expect(text).not.toMatch(/Hero figures/);
       expect(text).not.toMatch(/Every stat on this page is cited/);
       expect(text).not.toMatch(/An illustrative scenario/);
@@ -481,6 +482,7 @@ describe("field guides", () => {
         "/plan/new",
       );
       const text = container.textContent ?? "";
+      expect(text).not.toMatch(/\*\*|\]\(/);
       expect(text).toMatch(/Author: Escherbridge/);
       expect(text).toMatch(/Last reviewed: 2026-11-10, America\/Denver/);
       expect(text).toMatch(/Map & legal note:/);
