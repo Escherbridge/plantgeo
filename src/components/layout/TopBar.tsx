@@ -4,10 +4,12 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { useSavedGuestPlans } from "@/components/plans/YourGuestPlans";
 import {
   editorialFocusRing,
   editorialFocusRingInverse,
 } from "@/components/ui/editorial";
+import { guestPlanEditPath } from "@/lib/plans/guest-plan-links";
 import { cn } from "@/lib/utils";
 
 const NAVIGATION_ITEMS = [
@@ -241,10 +243,16 @@ export default function TopBar() {
   const menuId = useId();
 
   const role = (session?.user as { platformRole?: string } | undefined)?.platformRole;
-  const navigationItems: readonly NavigationItem[] =
-    role && MODERATION_ROLES.includes(role)
-      ? [...NAVIGATION_ITEMS, MODERATION_NAV_ITEM]
-      : NAVIGATION_ITEMS;
+  const latestGuestPlan = useSavedGuestPlans()[0];
+  const guestNavItem = latestGuestPlan
+    ? [{ href: guestPlanEditPath(latestGuestPlan), label: "Your guest plan" }]
+    : [];
+  const navigationItems: NavigationItem[] = [
+    ...NAVIGATION_ITEMS.slice(0, 2),
+    ...guestNavItem,
+    ...NAVIGATION_ITEMS.slice(2),
+    ...(role && MODERATION_ROLES.includes(role) ? [MODERATION_NAV_ITEM] : []),
+  ];
 
   const closeMenu = useCallback(() => setMenuOpen(false), []);
 

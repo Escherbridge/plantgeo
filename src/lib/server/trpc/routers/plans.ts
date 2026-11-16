@@ -175,7 +175,8 @@ export const plansRouter = router({
 
   /**
    * A signed-in caller owns the new plan. Everyone else gets a guest token
-   * returned once; only its hash is stored. The map area is copied from the
+   * returned once; only its hash is stored. There is no one-plan cap for a
+   * guest: each create issues a new token. The map area is copied from the
    * sample so this procedure does not accept a client bbox.
    */
   create: publicProcedure

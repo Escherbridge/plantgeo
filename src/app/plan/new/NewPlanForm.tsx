@@ -2,7 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { GuestLinkPanel } from "@/components/plans/GuestLinkPanel";
+import { YourGuestPlans } from "@/components/plans/YourGuestPlans";
 import { editorialFocusRing, editorialFocusRingInverse } from "@/components/ui/editorial";
+import { rememberGuestPlan, type SavedGuestPlan } from "@/lib/plans/guest-plan-links";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
@@ -10,7 +13,19 @@ export function NewPlanForm() {
   const router = useRouter();
   const [title, setTitle] = useState("Site plan");
   const [notice, setNotice] = useState<string | null>(null);
+  const [keptGuest, setKeptGuest] = useState<SavedGuestPlan | null>(null);
   const createPlan = trpc.plans.create.useMutation();
+
+  if (keptGuest) {
+    return (
+      <GuestLinkPanel
+        publicId={keptGuest.publicId}
+        guestToken={keptGuest.token}
+        title={keptGuest.title}
+        plain
+      />
+    );
+  }
 
   return (
     <form
@@ -21,10 +36,17 @@ export function NewPlanForm() {
         void createPlan
           .mutateAsync({ title })
           .then((created) => {
-            const params = new URLSearchParams();
-            if (created.guestToken) params.set("token", created.guestToken);
-            const query = params.toString();
-            router.push(query ? `/plan/${created.publicId}?${query}` : `/plan/${created.publicId}`);
+            if (created.guestToken) {
+              const saved = { publicId: created.publicId, token: created.guestToken, title };
+              try {
+                rememberGuestPlan(window.localStorage, saved);
+              } catch {
+                // The panel still shows the link when storage is unavailable.
+              }
+              setKeptGuest(saved);
+              return;
+            }
+            router.push(`/plan/${created.publicId}`);
           })
           .catch(() => {
             setNotice("The plan could not be started. Try again in a moment.");
@@ -60,6 +82,7 @@ export function NewPlanForm() {
           {notice}
         </p>
       ) : null}
+      <YourGuestPlans />
     </form>
   );
 }

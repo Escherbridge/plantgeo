@@ -6,9 +6,12 @@ import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { MapErrorBoundary } from "@/components/map/MapErrorBoundary";
 import { CatalogPicker } from "@/components/plans/CatalogPicker";
+import { GuestLinkPanel } from "@/components/plans/GuestLinkPanel";
 import { SamplePlanBanner } from "@/components/plans/SamplePlanBanner";
+import { YourGuestPlans } from "@/components/plans/YourGuestPlans";
 import { editorialFocusRing, editorialFocusRingInverse } from "@/components/ui/editorial";
 import type { CatalogProductCard, CatalogRead } from "@/lib/plans/catalog-view";
+import { rememberGuestPlan, type SavedGuestPlan } from "@/lib/plans/guest-plan-links";
 import { trpc } from "@/lib/trpc/client";
 import { cn } from "@/lib/utils";
 
@@ -63,7 +66,7 @@ export function PlanWorkspace({
   const [title, setTitle] = useState("Site plan");
   const [notice, setNotice] = useState<string | null>(null);
   const [pendingProductId, setPendingProductId] = useState<string | null>(null);
-  const [guestLinkCopied, setGuestLinkCopied] = useState(false);
+  const [keptGuest, setKeptGuest] = useState<SavedGuestPlan | null>(null);
   const createPlan = trpc.plans.create.useMutation();
   const addItem = trpc.plans.addItem.useMutation();
   const updateItem = trpc.plans.updateItem.useMutation();
@@ -74,19 +77,7 @@ export function PlanWorkspace({
     [items]
   );
   const readOnly = !plan.canEdit;
-  const showGuestLink = Boolean(guestToken) && !plan.savedToAccount && !plan.isSample && !guestLinkCopied;
-
-  async function copyGuestLink() {
-    if (!guestToken) return;
-    const url = new URL(`/plan/${plan.publicId}`, window.location.origin);
-    url.searchParams.set("token", guestToken);
-    try {
-      await navigator.clipboard.writeText(url.toString());
-      setGuestLinkCopied(true);
-    } catch {
-      setNotice("The link could not be copied.");
-    }
-  }
+  const showGuestLink = Boolean(guestToken) && !plan.savedToAccount && !plan.isSample;
 
   async function startPlan() {
     setNotice(null);
@@ -95,10 +86,17 @@ export function PlanWorkspace({
         title,
         refCode: refCode ?? undefined,
       });
-      const params = new URLSearchParams();
-      if (created.guestToken) params.set("token", created.guestToken);
-      const query = params.toString();
-      router.push(query ? `/plan/${created.publicId}?${query}` : `/plan/${created.publicId}`);
+      if (created.guestToken) {
+        const saved = { publicId: created.publicId, token: created.guestToken, title };
+        try {
+          rememberGuestPlan(window.localStorage, saved);
+        } catch {
+          // The panel still shows the link when storage is unavailable.
+        }
+        setKeptGuest(saved);
+        return;
+      }
+      router.push(`/plan/${created.publicId}`);
     } catch {
       setNotice("The plan could not be started. Try again in a moment.");
     }
@@ -162,40 +160,14 @@ export function PlanWorkspace({
   return (
     <div className="viewport-below-top-bar flex w-full flex-col overflow-hidden bg-paper">
       {plan.isSample ? <SamplePlanBanner label={plan.sampleLabel} /> : null}
-      {showGuestLink ? (
-        <div className="shrink-0 border-b border-rule bg-paper px-comfortable py-comfortable">
-          <h2 className="font-editorial-display text-subheading text-ink">Keep this link.</h2>
-          <p className="mt-snug max-w-measure font-editorial-text text-body text-ink">
-            It&apos;s the only way to edit this plan without an account. Anyone with it can edit, so
-            share it carefully.
-          </p>
-          <div className="mt-comfortable flex flex-wrap gap-snug">
-            <button
-              type="button"
-              onClick={() => void copyGuestLink()}
-              className={cn(
-                "bg-ink px-comfortable py-snug font-editorial-label text-label text-paper uppercase hover:bg-accent hover:text-accent-ink",
-                editorialFocusRingInverse
-              )}
-            >
-              Copy edit link
-            </button>
-            <Link
-              href={`/register?callbackUrl=${encodeURIComponent(`/plan/${plan.publicId}`)}`}
-              className={cn(
-                "inline-flex items-center border border-rule bg-paper px-comfortable py-snug font-editorial-label text-label text-ink uppercase hover:border-accent hover:text-accent",
-                editorialFocusRing
-              )}
-            >
-              Create an account to keep this plan
-            </Link>
-          </div>
-        </div>
-      ) : null}
-      {guestLinkCopied ? (
-        <p role="status" className="shrink-0 px-comfortable py-snug font-editorial-text text-body text-ink">
-          Link copied.
-        </p>
+      {keptGuest ? (
+        <GuestLinkPanel
+          publicId={keptGuest.publicId}
+          guestToken={keptGuest.token}
+          title={keptGuest.title}
+        />
+      ) : showGuestLink && guestToken ? (
+        <GuestLinkPanel publicId={plan.publicId} guestToken={guestToken} title={plan.title} />
       ) : null}
       <div className="flex min-h-0 flex-1 flex-col md:flex-row">
         <div className="relative min-h-0 flex-1">
@@ -235,7 +207,7 @@ export function PlanWorkspace({
             </p>
           )}
 
-          {showStart ? (
+          {showStart && !keptGuest ? (
             <form
               className="mt-comfortable flex flex-col gap-snug"
               onSubmit={(event) => {
@@ -275,6 +247,7 @@ export function PlanWorkspace({
                 </Link>
                 .
               </p>
+              <YourGuestPlans />
             </form>
           ) : null}
 

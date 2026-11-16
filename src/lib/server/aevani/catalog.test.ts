@@ -56,9 +56,33 @@ describe("Aevani catalog read", () => {
       canonicalUrl: "https://aevani.com/products/sample-kit",
       imageUrl: "https://aevani.com/images/kit.jpg",
     });
-    expect(result.products[0]?.priceLabel).toContain("19.99");
+    expect(result.products[0]?.priceLabel).toBeNull();
     expect(JSON.stringify(result)).not.toContain("SECRET-SKU");
     expect(JSON.stringify(result)).not.toContain("costPrice");
+  });
+
+  it("keeps a price only when the item is not coming soon", async () => {
+    mocks.fetchBoundedJson.mockResolvedValue({
+      contractVersion: "v1",
+      products: [
+        kit,
+        {
+          ...kit,
+          id: "product_14",
+          availability: "in_stock",
+          price: { amountMinor: 2500, currency: "USD" },
+        },
+      ],
+      nextCursor: null,
+    });
+
+    const result = await readAevaniCatalog();
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") return;
+    expect(result.products[0]?.comingSoon).toBe(true);
+    expect(result.products[0]?.priceLabel).toBeNull();
+    expect(result.products[1]?.comingSoon).toBe(false);
+    expect(result.products[1]?.priceLabel).toContain("25.00");
   });
 
   it("accepts the live catalog category object and displays its name", async () => {

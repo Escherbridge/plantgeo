@@ -52,9 +52,9 @@ export function CatalogPicker({
             <p className="mt-snug font-editorial-label text-label text-ink uppercase">
               {product.comingSoon ? "Coming soon" : product.availabilityLabel}
             </p>
-            {product.priceLabel ? (
+            {product.comingSoon || !product.priceLabel ? null : (
               <p className="mt-tight font-editorial-text text-caption text-ink">{product.priceLabel}</p>
-            ) : null}
+            )}
             {product.canonicalUrl ? (
               <a
                 href={product.canonicalUrl}

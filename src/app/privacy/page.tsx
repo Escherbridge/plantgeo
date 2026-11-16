@@ -6,6 +6,7 @@ import {
   EditorialProse,
   EditorialSection,
 } from "@/components/ui/editorial";
+import { GUEST_PLAN_STORAGE_KEY } from "@/lib/plans/guest-plan-links";
 import { PLAN_REF_COOKIE, PLAN_REF_MAX_AGE_SECONDS } from "@/lib/plans/ref-code";
 import { AI_GENERATED_DISCLAIMER } from "@/lib/regional-intelligence";
 import {
@@ -80,6 +81,12 @@ const deviceStores = [
   {
     term: "plantgeo-rail-hint-dismissed",
     description: "Whether the map-manager hint has been dismissed.",
+    note: "localStorage",
+  },
+  {
+    term: GUEST_PLAN_STORAGE_KEY,
+    description:
+      "Private edit links for site plans started without an account, so they can be reopened in this browser.",
     note: "localStorage",
   },
 ];
@@ -253,8 +260,11 @@ export default function PrivacyPage() {
             A site plan stores a title, an optional description, a camera box,
             an optional invite code, and, when the visitor is signed in, that
             account&apos;s id. A guest plan stores a SHA-256 hash of its edit
-            token. The raw token is in the private link and is not stored. The
-            sample plan is a demonstration row with no account and no token.
+            token. The raw token is in the private link. This browser may also
+            keep that link in localStorage under <em>{GUEST_PLAN_STORAGE_KEY}</em>{" "}
+            so the guest can reopen the plan. The server does not store the raw
+            token. The sample plan is a demonstration row with no account and no
+            token.
             Plan picks store the catalog id, the title shown at the time, a
             quantity, and optional notes. They are not written onto the public
             map.
