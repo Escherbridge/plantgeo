@@ -4,6 +4,7 @@ import {
   guestPlanEditPath,
   guestPlanEditUrl,
   guestPlanSnapshot,
+  migrateStoredGuestPlans,
   readSavedGuestPlans,
   rememberGuestPlan,
   savedGuestPlansFrom,
@@ -75,7 +76,28 @@ describe("guest plan links", () => {
       plan.publicId,
     ]);
     expect(rememberGuestPlan(storage, { ...plan, title: "Renamed" })[0]?.title).toBe("Renamed");
-    expect(readSavedGuestPlans(storage)).toHaveLength(2);
+    const third = {
+      publicId: "plan_third12345678901",
+      token: "third-token-value",
+      title: "South bed",
+    };
+    expect(rememberGuestPlan(storage, third).map((entry) => entry.publicId)).toEqual([
+      third.publicId,
+      plan.publicId,
+      newer.publicId,
+    ]);
+  });
+
+  it("keeps a single stored plan object and rewrites it as the list", () => {
+    const storage = memoryStorage(JSON.stringify(plan));
+    expect(readSavedGuestPlans(storage)).toEqual([plan]);
+    expect(migrateStoredGuestPlans(storage)).toEqual([plan]);
+    expect(JSON.parse(storage.getItem(GUEST_PLAN_STORAGE_KEY) ?? "null")).toEqual([plan]);
+    const newer = { publicId: "plan_newer12345678901", token: "newer-token-value", title: "Creek" };
+    expect(rememberGuestPlan(storage, newer).map((entry) => entry.publicId)).toEqual([
+      newer.publicId,
+      plan.publicId,
+    ]);
   });
 
   it("reads the browser snapshot after a plan is remembered", () => {

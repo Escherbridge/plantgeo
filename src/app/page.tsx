@@ -1,6 +1,7 @@
 import { PublicJsonLd } from "@/components/content/PublicJsonLd";
 import { CrawlableHome } from "@/components/home/CrawlableHome";
 import { HomeMap } from "@/components/home/HomeMap";
+import { HomeGuestPlans } from "@/components/plans/YourGuestPlans";
 import { publicPageMetadata } from "@/lib/public-metadata";
 
 const TITLE = "PlantGeo — Read sun, slope, drainage, and soils on your land";
@@ -19,6 +20,7 @@ export default function HomePage() {
       <PublicJsonLd name={TITLE} description={DESCRIPTION} path="/" />
       <HomeMap />
       <CrawlableHome />
+      <HomeGuestPlans />
     </div>
   );
 }

@@ -62,6 +62,67 @@ function Wordmark() {
   );
 }
 
+function GuestPlanNav({ compact = false }: { compact?: boolean }) {
+  const plans = useSavedGuestPlans();
+  const labelId = useId();
+  if (plans.length === 0) return null;
+  if (plans.length === 1) {
+    const plan = plans[0];
+    return (
+      <Link
+        href={guestPlanEditPath(plan)}
+        className={cn(
+          compact
+            ? "flex min-h-11 items-center rule-top-hairline border-t-rule-faint px-page-inset py-comfortable text-ink-muted hover:text-ink"
+            : "flex h-full items-center rule-left-hairline rule-top-heavy border-l-rule-faint border-t-transparent px-comfortable text-ink-muted hover:border-t-rule-faint hover:text-ink",
+          navType,
+          editorialFocusRing
+        )}
+      >
+        Your guest plan
+      </Link>
+    );
+  }
+  return (
+    <div className={cn(compact ? "flex flex-col" : "relative flex h-full items-stretch")}>
+      <p
+        id={labelId}
+        className={cn(
+          "flex items-center text-ink",
+          navType,
+          compact ? "px-page-inset pt-comfortable" : "px-comfortable"
+        )}
+      >
+        Your guest plans
+      </p>
+      <ul
+        aria-labelledby={labelId}
+        className={cn(
+          "flex flex-col bg-paper",
+          compact
+            ? ""
+            : "absolute top-full left-0 z-50 min-w-[16rem] rule-all-hairline border-rule"
+        )}
+      >
+        {plans.map((plan) => (
+          <li key={plan.publicId}>
+            <Link
+              href={guestPlanEditPath(plan)}
+              className={cn(
+                "flex min-h-11 items-center px-comfortable py-snug text-ink-muted hover:text-ink",
+                navType,
+                editorialFocusRing
+              )}
+            >
+              {plan.title}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function DesktopNavigation({
   pathname,
   items,
@@ -94,6 +155,7 @@ function DesktopNavigation({
           </Link>
         );
       })}
+      <GuestPlanNav />
     </nav>
   );
 }
@@ -243,14 +305,8 @@ export default function TopBar() {
   const menuId = useId();
 
   const role = (session?.user as { platformRole?: string } | undefined)?.platformRole;
-  const latestGuestPlan = useSavedGuestPlans()[0];
-  const guestNavItem = latestGuestPlan
-    ? [{ href: guestPlanEditPath(latestGuestPlan), label: "Your guest plan" }]
-    : [];
   const navigationItems: NavigationItem[] = [
-    ...NAVIGATION_ITEMS.slice(0, 2),
-    ...guestNavItem,
-    ...NAVIGATION_ITEMS.slice(2),
+    ...NAVIGATION_ITEMS,
     ...(role && MODERATION_ROLES.includes(role) ? [MODERATION_NAV_ITEM] : []),
   ];
 
@@ -352,6 +408,7 @@ export default function TopBar() {
               </Link>
             );
           })}
+          <GuestPlanNav compact />
         </nav>
 
         <div className="rule-top-medium border-t-rule py-comfortable">

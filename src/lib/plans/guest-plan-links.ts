@@ -10,7 +10,6 @@ export const GUEST_PLAN_CHANGE_EVENT = "plantgeo-guest-plans";
 
 const PUBLIC_ID = /^plan_[A-Za-z0-9_-]{16,64}$/;
 const GUEST_TOKEN = /^[A-Za-z0-9_-]{16,512}$/;
-const MAX_SAVED = 20;
 
 export type SavedGuestPlan = {
   publicId: string;
@@ -49,25 +48,56 @@ function asSaved(value: unknown): SavedGuestPlan | null {
   };
 }
 
-/** Drops malformed entries. A stored value is never used as a URL except through `guestPlanEditPath`. */
+function collectPlans(entries: unknown[]): SavedGuestPlan[] {
+  const seen = new Set<string>();
+  const plans: SavedGuestPlan[] = [];
+  for (const entry of entries) {
+    const plan = asSaved(entry);
+    if (!plan || seen.has(plan.publicId)) continue;
+    seen.add(plan.publicId);
+    plans.push(plan);
+  }
+  return plans.length === 0 ? EMPTY_GUEST_PLANS : plans;
+}
+
+/**
+ * Reads every saved plan. The stored value is an array, newest first. A single
+ * plan object from an earlier write is the same list of one, not a reason to
+ * drop it. Malformed entries are skipped; the rest stay.
+ */
 export function savedGuestPlansFrom(raw: string | null): SavedGuestPlan[] {
   if (!raw) return EMPTY_GUEST_PLANS;
   try {
     const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return EMPTY_GUEST_PLANS;
-    const seen = new Set<string>();
-    const plans: SavedGuestPlan[] = [];
-    for (const entry of parsed) {
-      const plan = asSaved(entry);
-      if (!plan || seen.has(plan.publicId)) continue;
-      seen.add(plan.publicId);
-      plans.push(plan);
-      if (plans.length === MAX_SAVED) break;
-    }
-    return plans;
+    if (Array.isArray(parsed)) return collectPlans(parsed);
+    const one = asSaved(parsed);
+    return one ? [one] : EMPTY_GUEST_PLANS;
   } catch {
     return EMPTY_GUEST_PLANS;
   }
+}
+
+/** Rewrites a single-plan object into the array. An array that already matches is left untouched. */
+export function migrateStoredGuestPlans(
+  storage: Pick<Storage, "getItem" | "setItem">
+): SavedGuestPlan[] {
+  let raw: string | null;
+  try {
+    raw = storage.getItem(GUEST_PLAN_STORAGE_KEY);
+  } catch {
+    return EMPTY_GUEST_PLANS;
+  }
+  const plans = savedGuestPlansFrom(raw);
+  if (!raw || plans.length === 0) return plans;
+  const next = JSON.stringify(plans);
+  if (next === raw) return plans;
+  storage.setItem(GUEST_PLAN_STORAGE_KEY, next);
+  if (typeof window !== "undefined" && storage === window.localStorage) {
+    cachedRaw = next;
+    cachedPlans = plans;
+    window.dispatchEvent(new Event(GUEST_PLAN_CHANGE_EVENT));
+  }
+  return plans;
 }
 
 export function readSavedGuestPlans(storage: Pick<Storage, "getItem">): SavedGuestPlan[] {
@@ -112,7 +142,7 @@ export function rememberGuestPlan(
   const next = [
     saved,
     ...readSavedGuestPlans(storage).filter((entry) => entry.publicId !== saved.publicId),
-  ].slice(0, MAX_SAVED);
+  ];
   const raw = JSON.stringify(next);
   storage.setItem(GUEST_PLAN_STORAGE_KEY, raw);
   if (typeof window !== "undefined" && storage === window.localStorage) {
