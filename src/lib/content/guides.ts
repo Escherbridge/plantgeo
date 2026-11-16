@@ -32,7 +32,7 @@ export const GUIDE_INDEX: GuideIndex = {
     "Ten practical guides showing how homesteaders, growers, and site designers pair public FEMA, Ready.gov, FWS wetland, and USGS elevation maps with a real walk around the land.",
   eyebrow: "Field guides · sun, slope, water, wetlands & wildfire buffers",
   publishedAt: "2026-11-10",
-  lastReviewed: "2026-11-10",
+  lastReviewed: "2026-11-15",
   blocks: [
     {
       type: "paragraph",
@@ -158,7 +158,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "fema-flood-maps",
     crumb: "FEMA flood maps",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -257,7 +257,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "ready-floods",
     crumb: "Flooding doesn't follow lines on a map",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -343,7 +343,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "nwi-wetlands",
     crumb: "National Wetlands Inventory maps",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -355,7 +355,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "On its official NWI program landing page, the U.S. Fish and Wildlife Service states: \"The U.S. Fish and Wildlife Service is the principal federal agency tasked with providing information to the public on the extent and status of the nation's wetland and deepwater habitats, as well as changes to these habitats through time.\" The Service notes: \"We produce and distribute maps and other geospatial data on American wetland and deepwater habitats, as well as monitor changes in these habitats through time.\"",
+        text: "On its official NWI program landing page, the U.S. Fish and Wildlife Service states: \"The U.S. Fish and Wildlife Service is the principal federal agency tasked with providing information to the public on the extent and status of the nation's wetland and deepwater habitats, as well as changes to these habitats over time.\" The Service notes: \"We produce and distribute maps and other geospatial data on American wetland and deepwater habitats, as well as monitor changes in these habitats through time.\"",
       },
       {
         type: "paragraph",
@@ -419,7 +419,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "usgs-3dep",
     crumb: "USGS 3D Elevation Program",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -499,7 +499,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "national-map",
     crumb: "The National Map",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -575,11 +575,11 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "base-flood-elevation",
     crumb: "What is a base flood elevation",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
-        text: "When you inspect a creekside parcel on a FEMA map and see a dashed wave line with a number like `482` or `2714`, that number is a Base Flood Elevation (BFE). Before pouring footings for a wash-pack shed, raised greenhouse, or solar battery rack near bottomland, knowing what that number actually measures—and which zones leave it blank—prevents expensive elevation guesswork.",
+        text: "When you inspect a creekside parcel on a FEMA map and see a dashed wave line with a number like 482 or 2714, that number is a Base Flood Elevation (BFE). Before pouring footings for a wash-pack shed, raised greenhouse, or solar battery rack near bottomland, knowing what that number actually measures—and which zones leave it blank—prevents expensive elevation guesswork.",
       },
       {
         type: "heading",
@@ -658,7 +658,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "firmette",
     crumb: "What is a FIRMette",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -678,7 +678,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "One critical boundary trips many people up: preliminary maps cannot generate a FIRMette. As FEMA's FAQ states directly: \"Preliminary Flood Insurance Rate Maps are not final regulatory products and should not be used for making flood determinations. Preliminary FIRMs cannot be viewed with the FIRMette tool, nor accessed with the FIRMette Desktop application. Therefore, a FIRMette cannot be created for preliminary maps.\" Read [Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) if your county has an upcoming draft update under review.",
+        text: "One critical boundary trips many people up: preliminary maps cannot generate a FIRMette. As FEMA's FAQ states directly: \"Preliminary Flood Insurance Rate Maps are not final regulatory products and should not be used for the purposing of making flood determinations. Preliminary FIRMs cannot be viewed with the FIRMette tool, nor accessed with the FIRMette Desktop application. Therefore, a FIRMette cannot be created for preliminary maps.\" Read [Effective and preliminary flood maps](/guides/nfhl-preliminary-vs-effective) if your county has an upcoming draft update under review.",
       },
       {
         type: "heading",
@@ -738,7 +738,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "nfhl-preliminary-vs-effective",
     crumb: "Effective and preliminary flood maps",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -826,7 +826,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "ready-wildfires",
     crumb: "Ready.gov wildfire preparedness",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
@@ -906,7 +906,7 @@ export const GUIDES: readonly GuideArticle[] = [
     slug: "us-topo",
     crumb: "US Topo and historical topographic maps",
     publishedAt: "2026-11-10",
-    lastReviewed: "2026-11-10",
+    lastReviewed: "2026-11-15",
     blocks: [
       {
         type: "paragraph",
