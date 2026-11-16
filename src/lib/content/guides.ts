@@ -269,7 +269,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "Ready.gov states plainly: \"Floods are the most common disaster in the United States.\" Floodwaters \"may: Result from rain, snow, coastal storms, storm surges and overflows of dams and other water systems. Develop slowly or quickly. Flash floods can come without warning. Cause outages, disrupt transportation, damage buildings and create landslides.\" Under a flood warning, Ready.gov warns: \"Find safe shelter right away. Do not walk, swim or drive through flood waters.\"",
+        text: "Ready.gov states plainly: \"Floods are the most common disaster in the United States.\" Floods \"may: Result from rain, snow, coastal storms, storm surges and overflows of dams and other water systems. Develop slowly or quickly. Flash floods can come without warning. Cause outages, disrupt transportation, damage buildings and create landslides.\" Under a flood warning, Ready.gov warns: \"Find safe shelter right away. Do not walk, swim or drive through flood waters.\"",
       },
       {
         type: "paragraph",
@@ -766,7 +766,7 @@ export const GUIDES: readonly GuideArticle[] = [
       },
       {
         type: "paragraph",
-        text: "At the same time, FEMA MSC FAQs remain unambiguous: preliminary FIRMs \"are not final regulatory products\" and should not be used to make final flood determinations, and you cannot generate a [FIRMette](/guides/firmette) from a preliminary panel.",
+        text: "At the same time, FEMA MSC FAQs remain unambiguous: preliminary FIRMs \"are not final regulatory products\" and should not be used to make flood determinations, and you cannot generate a [FIRMette](/guides/firmette) from a preliminary panel.",
       },
       {
         type: "heading",
