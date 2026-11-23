@@ -102,7 +102,7 @@ export function LoginForm({
       <button
         type="submit"
         disabled={loading}
-        className={`rounded-md bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors ${TOUCH_TARGET}`}
+        className={`rounded-md bg-emerald-700 hover:bg-emerald-800 disabled:opacity-50 px-4 py-2 text-sm font-medium text-white transition-colors ${TOUCH_TARGET}`}
       >
         {loading ? "Signing in…" : "Sign in"}
       </button>

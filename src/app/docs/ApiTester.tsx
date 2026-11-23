@@ -128,10 +128,11 @@ export default function ApiTester() {
   return (
     <div className="space-y-4">
       <div className="space-y-1">
-        <label className="block text-sm font-medium text-[hsl(var(--foreground))]">
+        <label htmlFor="endpoint" className="block text-sm font-medium text-[hsl(var(--foreground))]">
           Endpoint
         </label>
         <select
+          id="endpoint"
           value={selectedEndpoint}
           onChange={(e) => handleEndpointChange(e.target.value)}
           className={`w-full rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--background))] px-3 py-2 text-sm text-[hsl(var(--foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))] ${TOUCH_TARGET} ${NO_IOS_FOCUS_ZOOM}`}
@@ -197,7 +198,7 @@ export default function ApiTester() {
       <button
         onClick={handleSubmit}
         disabled={loading}
-        className={`rounded-md bg-[hsl(var(--primary))] px-4 py-2 text-sm font-medium text-[hsl(var(--primary-foreground))] hover:opacity-90 disabled:opacity-50 transition-opacity ${TOUCH_TARGET}`}
+        className={`rounded-md bg-emerald-700 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-800 disabled:opacity-50 transition-colors ${TOUCH_TARGET}`}
       >
         {loading ? "Sending..." : "Send Request"}
       </button>

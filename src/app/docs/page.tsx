@@ -11,9 +11,14 @@ export const metadata = publicPageMetadata({
   path: "/docs",
 });
 
-function CodeBlock({ code }: { code: string }) {
+function CodeBlock({ code, section }: { code: string; section: string }) {
   return (
-    <pre className="overflow-x-auto rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-4 text-xs text-[hsl(var(--muted-foreground))]">
+    <pre
+      tabIndex={0}
+      role="region"
+      aria-label={`Code sample: ${section}`}
+      className="overflow-x-auto rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-4 text-xs text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+    >
       {code}
     </pre>
   );
@@ -55,6 +60,7 @@ function Section({
 }
 
 function EndpointCard({
+  section,
   method,
   path,
   description,
@@ -62,6 +68,7 @@ function EndpointCard({
   responseFormat,
   curlExample,
 }: {
+  section: string;
   method: "GET" | "POST";
   path: string;
   description: string;
@@ -113,7 +120,7 @@ function EndpointCard({
                     </td>
                     <td className="py-1.5 pr-4 text-xs text-[hsl(var(--muted-foreground))]">
                       {p.required ? (
-                        <span className="text-[hsl(var(--destructive))]">Yes</span>
+                        <span className="text-[#f87171]">Required</span>
                       ) : (
                         "No"
                       )}
@@ -133,14 +140,14 @@ function EndpointCard({
         <h4 className="text-sm font-semibold text-[hsl(var(--foreground))]">
           Response Format
         </h4>
-        <CodeBlock code={responseFormat} />
+        <CodeBlock section={section} code={responseFormat} />
       </div>
 
       <div className="space-y-1">
         <h4 className="text-sm font-semibold text-[hsl(var(--foreground))]">
           cURL Example
         </h4>
-        <CodeBlock code={curlExample} />
+        <CodeBlock section={section} code={curlExample} />
       </div>
     </div>
   );
@@ -218,6 +225,7 @@ export default function DocsPage() {
             request header.
           </p>
           <CodeBlock
+            section="Authentication"
             code={`# All requests require this header\ncurl -H "x-api-key: pg_your_key_here" https://plantgeo.aevani.com/api/v1/layers`}
           />
           <div className="rounded-md border border-[hsl(var(--border))] p-4 space-y-2">
@@ -228,7 +236,7 @@ export default function DocsPage() {
               Missing or invalid keys return HTTP 401. Rate limit exceeded returns HTTP 429
               with a <code className="font-mono">Retry-After: 60</code> header.
             </p>
-            <CodeBlock code={`// 401 Unauthorized\n{ "error": "Invalid or missing API key" }\n\n// 429 Too Many Requests\n{ "error": "Rate limit exceeded" }`} />
+            <CodeBlock section="Error Responses" code={`// 401 Unauthorized\n{ "error": "Invalid or missing API key" }\n\n// 429 Too Many Requests\n{ "error": "Rate limit exceeded" }`} />
           </div>
           <div className="rounded-md border border-[hsl(var(--border))] p-4 space-y-2">
             <h3 className="text-sm font-semibold text-[hsl(var(--foreground))]">
@@ -248,6 +256,7 @@ export default function DocsPage() {
             Query geospatial features as OGC-compliant GeoJSON FeatureCollections.
           </p>
           <EndpointCard
+            section="Features"
             method="GET"
             path="/api/v1/features"
             description="Retrieve a paginated GeoJSON FeatureCollection of features. Filter by bounding box or layer ID."
@@ -308,6 +317,7 @@ export default function DocsPage() {
             List all publicly available layers in the platform.
           </p>
           <EndpointCard
+            section="Layers"
             method="GET"
             path="/api/v1/layers"
             description="Returns all public layers (is_public = true) with their metadata."
@@ -332,6 +342,7 @@ export default function DocsPage() {
             more. Rate limited per API key.
           </p>
           <EndpointCard
+            section="Routing"
             method="POST"
             path="/api/v1/route"
             description="Proxy to Valhalla routing engine. Send a standard Valhalla route request and receive a turn-by-turn route response."
@@ -368,6 +379,7 @@ export default function DocsPage() {
             Forward geocoding powered by Photon (backed by OpenStreetMap/Nominatim).
           </p>
           <EndpointCard
+            section="Geocoding"
             method="GET"
             path="/api/v1/geocode"
             description="Forward geocode a place name or address. Returns a GeoJSON FeatureCollection from Photon."

@@ -30,7 +30,7 @@ export function LoginView() {
   return (
     <div className="flex flex-col gap-6">
       <div className="text-center">
-        <h2 className="text-xl text-zinc-100 [font-family:var(--font-auth-display)]">Sign in</h2>
+        <h1 className="text-xl text-zinc-100 [font-family:var(--font-auth-display)]">Sign in</h1>
         <p className="mt-1 text-xs text-zinc-500">Sign in to see your site plans and the map.</p>
       </div>
 

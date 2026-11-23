@@ -129,9 +129,10 @@ export function EditorialDefinitionList({
             {item.description}
           </dd>
           {item.note !== undefined && (
-            <div className="col-span-4 mt-tight font-editorial-label text-label text-accent uppercase md:col-span-2 md:mt-0 md:text-right">
+            // A second description, not a nested div: a grouping div under dl may only contain dt and dd.
+            <dd className="col-span-4 mt-tight font-editorial-label text-label text-accent uppercase md:col-span-2 md:mt-0 md:text-right">
               {item.note}
-            </div>
+            </dd>
           )}
         </div>
       ))}
