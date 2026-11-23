@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { PRIVATE_ROUTE_ROBOTS } from "@/lib/public-site";
 import { Fraunces, IBM_Plex_Mono } from "next/font/google";
 import { AuthWayfinding } from "@/components/auth/AuthWayfinding";
@@ -50,9 +51,12 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <span className="text-[10px] uppercase tracking-[0.35em] text-emerald-500">
             Geospatial Access
           </span>
-          <h1 className="mt-2 text-3xl italic text-zinc-50 [font-family:var(--font-auth-display)]">
+          <Link
+            href="/"
+            className="mt-2 text-3xl italic text-zinc-50 [font-family:var(--font-auth-display)] focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          >
             Plant<span className="not-italic text-emerald-500">Geo</span>
-          </h1>
+          </Link>
         </div>
 
         <div className="relative rounded-xl border border-zinc-800 bg-zinc-900/70 p-8 shadow-2xl shadow-black/40 backdrop-blur-xl">

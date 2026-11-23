@@ -27,8 +27,9 @@ function renderAttributionRows(): Map<string, AttributionRow> {
   const rows = new Map<string, AttributionRow>();
   for (const dt of Array.from(section.querySelectorAll("dl dt"))) {
     const row = dt.parentElement;
-    const dd = row?.querySelector("dd");
-    const note = row?.querySelector("dd + div");
+    const dds = Array.from(row?.children ?? []).filter((child) => child.tagName === "DD");
+    const dd = dds[0];
+    const note = dds[1];
     rows.set(dt.textContent?.trim() ?? "", {
       description: dd?.textContent?.trim() ?? "",
       note: note?.textContent?.trim() ?? null,
@@ -36,6 +37,25 @@ function renderAttributionRows(): Map<string, AttributionRow> {
   }
   return rows;
 }
+
+describe("About page definition lists", () => {
+  it("puts one wrapper div of dt and dd elements directly under each ledger", () => {
+    const { container } = render(<AboutPage />);
+    for (const id of ["parity", "stack", "attribution", "models"]) {
+      const list = container.querySelector(`#${id} dl`);
+      expect(list, id).toBeTruthy();
+      const groups = Array.from(list?.children ?? []);
+      expect(groups.length).toBeGreaterThan(0);
+      for (const group of groups) {
+        expect(group.tagName).toBe("DIV");
+        const tags = Array.from(group.children).map((child) => child.tagName);
+        expect(tags[0]).toBe("DT");
+        expect(tags.slice(1).every((tag) => tag === "DD")).toBe(true);
+        expect(tags).toContain("DD");
+      }
+    }
+  });
+});
 
 describe("About page — data attribution claims", () => {
   // Every claim in §06 must have a user-reachable path behind it. The three rows below were

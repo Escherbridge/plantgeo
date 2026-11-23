@@ -24,6 +24,7 @@ function expectWayfinding() {
 describe("auth wayfinding", () => {
   it("gives login and register the site-plan leads", () => {
     render(<RegisterView />);
+    expect(screen.getByRole("heading", { level: 1, name: "Create an account" })).toBeTruthy();
     expect(
       screen.getByText("Create an account to save site plans and come back to them."),
     ).toBeTruthy();
@@ -36,6 +37,9 @@ describe("auth wayfinding", () => {
       </AuthLayout>,
     );
     expectWayfinding();
+    const wordmark = screen.getByRole("link", { name: "PlantGeo" });
+    expect(wordmark.getAttribute("href")).toBe("/");
+    expect(screen.queryByRole("heading", { name: "PlantGeo" })).toBeNull();
     expect(screen.getByRole("link", { name: "Skip to the form" }).getAttribute("href")).toBe(
       "#auth-card",
     );
