@@ -11,13 +11,17 @@ export const metadata = publicPageMetadata({
   path: "/docs",
 });
 
+/** Same visible ring the code samples use, so a keyboard user can land on a scroller. */
+const SCROLL_REGION_FOCUS =
+  "focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]";
+
 function CodeBlock({ code, section }: { code: string; section: string }) {
   return (
     <pre
       tabIndex={0}
       role="region"
       aria-label={`Code sample: ${section}`}
-      className="overflow-x-auto rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-4 text-xs text-[hsl(var(--muted-foreground))] focus:outline-none focus:ring-2 focus:ring-[hsl(var(--ring))]"
+      className={`overflow-x-auto rounded-md border border-[hsl(var(--border))] bg-[hsl(var(--muted))] p-4 text-xs text-[hsl(var(--muted-foreground))] ${SCROLL_REGION_FOCUS}`}
     >
       {code}
     </pre>
@@ -89,20 +93,26 @@ function EndpointCard({
       {params.length > 0 && (
         <div className="space-y-2">
           <h4 className="text-sm font-semibold text-[hsl(var(--foreground))]">Parameters</h4>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div
+            tabIndex={0}
+            role="region"
+            aria-label={`Parameters: ${section}`}
+            className={`overflow-x-auto rounded-md ${SCROLL_REGION_FOCUS}`}
+          >
+            {/* table-fixed below sm keeps the table inside a 390px viewport; Description wraps. */}
+            <table className="w-full table-fixed break-words text-sm sm:table-auto">
               <thead>
                 <tr className="border-b border-[hsl(var(--border))]">
-                  <th className="py-1.5 pr-4 text-left text-xs font-medium text-[hsl(var(--muted-foreground))]">
+                  <th className="w-[24%] py-1.5 pr-2 text-left align-top text-xs font-medium text-[hsl(var(--muted-foreground))] sm:w-auto sm:pr-4">
                     Name
                   </th>
-                  <th className="py-1.5 pr-4 text-left text-xs font-medium text-[hsl(var(--muted-foreground))]">
+                  <th className="w-[20%] py-1.5 pr-2 text-left align-top text-xs font-medium text-[hsl(var(--muted-foreground))] sm:w-auto sm:pr-4">
                     Type
                   </th>
-                  <th className="py-1.5 pr-4 text-left text-xs font-medium text-[hsl(var(--muted-foreground))]">
+                  <th className="w-[26%] py-1.5 pr-2 text-left align-top text-xs font-medium text-[hsl(var(--muted-foreground))] sm:w-auto sm:pr-4">
                     Required
                   </th>
-                  <th className="py-1.5 text-left text-xs font-medium text-[hsl(var(--muted-foreground))]">
+                  <th className="py-1.5 text-left align-top text-xs font-medium break-words text-[hsl(var(--muted-foreground))]">
                     Description
                   </th>
                 </tr>
@@ -110,22 +120,22 @@ function EndpointCard({
               <tbody className="divide-y divide-[hsl(var(--border))]">
                 {params.map((p) => (
                   <tr key={p.name}>
-                    <td className="py-1.5 pr-4">
-                      <code className="text-xs font-mono text-[hsl(var(--foreground))]">
+                    <td className="py-1.5 pr-2 align-top sm:pr-4">
+                      <code className="text-xs font-mono break-words text-[hsl(var(--foreground))]">
                         {p.name}
                       </code>
                     </td>
-                    <td className="py-1.5 pr-4 text-xs text-[hsl(var(--muted-foreground))]">
+                    <td className="py-1.5 pr-2 align-top text-xs break-words text-[hsl(var(--muted-foreground))] sm:pr-4">
                       {p.type}
                     </td>
-                    <td className="py-1.5 pr-4 text-xs text-[hsl(var(--muted-foreground))]">
+                    <td className="py-1.5 pr-2 align-top text-xs text-[hsl(var(--muted-foreground))] sm:pr-4">
                       {p.required ? (
                         <span className="text-[#f87171]">Required</span>
                       ) : (
                         "No"
                       )}
                     </td>
-                    <td className="py-1.5 text-xs text-[hsl(var(--muted-foreground))]">
+                    <td className="py-1.5 align-top text-xs break-words text-[hsl(var(--muted-foreground))]">
                       {p.description}
                     </td>
                   </tr>
