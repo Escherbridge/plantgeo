@@ -86,14 +86,18 @@ async function insertIssuedCode(
   for (let attempt = 0; attempt < CODE_ATTEMPTS; attempt += 1) {
     const code = buildAffiliateCode(values.name, values.organization, suffix());
     try {
-      await database.insert(affiliates).values({
-        applicationId: values.applicationId,
-        email: values.email,
-        name: values.name,
-        organization: values.organization,
-        code,
-        status: "active",
-        approvedBy: values.approvedBy,
+      // Savepoint: a unique violation aborts a Postgres transaction, so the
+      // retry needs the failed insert rolled back on its own.
+      await database.transaction(async (savepoint) => {
+        await savepoint.insert(affiliates).values({
+          applicationId: values.applicationId,
+          email: values.email,
+          name: values.name,
+          organization: values.organization,
+          code,
+          status: "active",
+          approvedBy: values.approvedBy,
+        });
       });
       return code;
     } catch (error) {
@@ -291,11 +295,11 @@ export async function loadAffiliateDashboard(
   userId: string
 ): Promise<AffiliateDashboard | null> {
   const [user] = await database
-    .select({ email: users.email })
+    .select({ email: users.email, emailVerified: users.emailVerified })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
-  if (!user || typeof user.email !== "string") return null;
+  if (!user || typeof user.email !== "string" || !user.emailVerified) return null;
 
   const email = normalizeAuthEmail(user.email);
   if (email.length === 0) return null;

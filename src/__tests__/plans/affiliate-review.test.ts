@@ -260,7 +260,7 @@ describe("active invite codes", () => {
 describe("affiliate role on sign-in", () => {
   it("grants affiliate to a contributor with a matching email", async () => {
     const memory = createMemoryDb({
-      users: [[{ email: "Ada@Example.com", platformRole: "contributor" }]],
+      users: [[{ email: "Ada@Example.com", platformRole: "contributor", emailVerified: new Date() }]],
       affiliates: [[{ id: "aff-1" }]],
     });
 
@@ -273,7 +273,7 @@ describe("affiliate role on sign-in", () => {
 
   it("links the row and leaves an admin role in place", async () => {
     const memory = createMemoryDb({
-      users: [[{ email: "ada@example.com", platformRole: "admin" }]],
+      users: [[{ email: "ada@example.com", platformRole: "admin", emailVerified: new Date() }]],
       affiliates: [[{ id: "aff-1" }]],
     });
 
@@ -281,9 +281,19 @@ describe("affiliate role on sign-in", () => {
     expect(memory.updates).toEqual([{ table: "affiliates", values: { userId: USER_ID } }]);
   });
 
+  it("ignores an unverified address, so a claimed email inherits nothing", async () => {
+    const memory = createMemoryDb({
+      users: [[{ email: "ada@example.com", platformRole: "contributor", emailVerified: null }]],
+      affiliates: [[{ id: "aff-1" }]],
+    });
+
+    await expect(grantAffiliateRoleOnSignIn(memory.database, USER_ID)).resolves.toBe("none");
+    expect(memory.updates).toEqual([]);
+  });
+
   it("does nothing when the email has no active code", async () => {
     const memory = createMemoryDb({
-      users: [[{ email: "ada@example.com", platformRole: "contributor" }]],
+      users: [[{ email: "ada@example.com", platformRole: "contributor", emailVerified: new Date() }]],
       affiliates: [[]],
     });
 
@@ -293,9 +303,18 @@ describe("affiliate role on sign-in", () => {
 });
 
 describe("affiliate dashboard count", () => {
+  it("shows nothing to an unverified address", async () => {
+    const memory = createMemoryDb({
+      users: [[{ email: "ada@example.com", emailVerified: null }]],
+      affiliates: [[{ code: "ada-planner-ab12cd", status: "active" }]],
+    });
+
+    await expect(loadAffiliateDashboard(memory.database, USER_ID)).resolves.toBeNull();
+  });
+
   it("counts plans started from the active code", async () => {
     const memory = createMemoryDb({
-      users: [[{ email: "ada@example.com" }]],
+      users: [[{ email: "ada@example.com", emailVerified: new Date() }]],
       affiliates: [[{ code: "ada-planner-ab12cd", status: "active" }]],
       site_plans: [[{ plansStarted: 1 }]],
     });

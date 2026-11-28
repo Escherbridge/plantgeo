@@ -15,11 +15,18 @@ export async function grantAffiliateRoleOnSignIn(
   userId: string
 ): Promise<AffiliateRoleGrant> {
   const [user] = await database
-    .select({ email: users.email, platformRole: users.platformRole })
+    .select({
+      email: users.email,
+      platformRole: users.platformRole,
+      emailVerified: users.emailVerified,
+    })
     .from(users)
     .where(eq(users.id, userId))
     .limit(1);
   if (!user || typeof user.email !== "string") return "none";
+  // A credential account can claim any address until it redeems its emailed
+  // link, so only a verified address may inherit an issued code.
+  if (!user.emailVerified) return "none";
 
   const email = normalizeAuthEmail(user.email);
   if (email.length === 0) return "none";

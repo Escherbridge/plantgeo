@@ -62,7 +62,7 @@ describe("affiliate role during sign-in", () => {
     const callback = authOptions.callbacks?.jwt;
     if (!callback) throw new Error("JWT callback is not configured");
     mocks.state.selects = [
-      [{ email: "ada@example.com", platformRole: "contributor" }],
+      [{ email: "ada@example.com", platformRole: "contributor", emailVerified: new Date() }],
       [{ id: "aff-1" }],
       [{ platformRole: "affiliate", activeTeamId: null, memberTeamId: null, memberRole: null }],
     ];
