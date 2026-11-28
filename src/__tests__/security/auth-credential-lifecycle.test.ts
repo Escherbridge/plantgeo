@@ -53,6 +53,7 @@ const mocks = vi.hoisted(() => {
       "teamRole",
       "joinedAt",
     ]),
+    affiliates: fakeTable("affiliates", ["id", "email", "status", "userId", "code"]),
     emailVerificationTokens: fakeTable("email_verification_tokens", [
       "id",
       "userId",

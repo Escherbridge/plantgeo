@@ -6,6 +6,7 @@ import { isPlanBbox } from "@/lib/plans/bbox";
 import { normalizeRefCode, readPlanRefCookie } from "@/lib/plans/ref-code";
 import { SAMPLE_PLAN_PUBLIC_ID } from "@/lib/plans/sample";
 import { readAevaniCatalog } from "@/lib/server/aevani/catalog";
+import { activeRefCode } from "@/lib/server/affiliate/review";
 import { sitePlanItems, sitePlans } from "@/lib/server/db/schema";
 import { checkRateLimit } from "@/lib/server/middleware/api-auth";
 import { canEditSitePlan, issueGuestPlanToken } from "@/lib/server/plans/access";
@@ -189,9 +190,13 @@ export const plansRouter = router({
     .mutation(async ({ ctx, input }) => {
       await enforcePlanRateLimit(ctx.req, "plans:create", PLAN_CREATES_PER_MINUTE);
       const ownerUserId = sessionUserId(ctx.session);
-      const refCode =
-        normalizeRefCode(input.refCode) ??
-        readPlanRefCookie(ctx.req?.headers.get("cookie"));
+      // An explicit ref, including an empty one, wins over the cookie.
+      // Only an active affiliate code is stored. Anything else is dropped.
+      const requested =
+        input.refCode !== undefined
+          ? normalizeRefCode(input.refCode)
+          : readPlanRefCookie(ctx.req?.headers.get("cookie"));
+      const refCode = await activeRefCode(ctx.db, requested);
 
       const [sample] = await ctx.db
         .select({ bbox: sitePlans.bbox, viewport: sitePlans.viewport })

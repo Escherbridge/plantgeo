@@ -42,6 +42,17 @@ notices still require a configured provider; account creation tolerates failed d
 acknowledgement explains sign-in without asserting that an account was newly created
 or that email was sent.
 
+## Affiliate sign-in
+
+Approving an application inserts `affiliates` and does not change `users` in
+that request. The next sign-in with the same email grants `platform_role`
+`affiliate` when the account is still `contributor` (or the column is null).
+Admin, expert, and viewer are not rewritten. `affiliate` stays on
+`contributorProcedure`, so the grant does not remove contributor access and
+does not add expert or admin access. `/dashboard/affiliate` keys off the active
+row, not the role column, so a person who is already signed in can open it
+before the next sign-in writes the role.
+
 ## Canonical contribution review
 
 Publish and reject are pending-review actions, including for administrators. The final UPDATE
